@@ -1,30 +1,9 @@
 # This method of unwrapping uses more bits but remains loseless as well as its implementation uses more optimized calls
-
-
-
 import numpy as np
+from numba import njit
+import statistics
 
-# shape = np.array([
-#     [0, 1, 1, 1, 0, 1, 1, 1, 1],
-#     [1, 1, 0, 1, 1, 1, 0, 0, 1],
-#     [1, 0, 0, 0, 0, 0, 0, 0, 1],
-#     [1, 1, 0, 0, 0, 0, 1, 1, 1],
-#     [0, 1, 0, 0, 0, 0, 1, 0, 0],
-#     [0, 1, 0, 0, 0, 0, 1, 0, 0],
-#     [0, 1, 0, 0, 0, 0, 1, 0, 0],
-#     [0, 1, 1, 1, 1, 1, 1, 0, 0],
-# ])
 
-shape = np.array([
-    [0, 0, 0, 0, 0, 0, 0, 0, 0],
-    [0, 1, 1, 1, 1, 1, 1, 1, 0],
-    [0, 1, 0, 0, 0, 0, 0, 1, 0],
-    [0, 1, 0, 0, 0, 0, 1, 1, 0],
-    [0, 1, 0, 0, 0, 0, 1, 0, 0],
-    [0, 1, 0, 0, 0, 0, 1, 0, 0],
-    [0, 1, 1, 1, 1, 1, 1, 0, 0],
-    [0, 0, 0, 0, 0, 0, 0, 0, 0],
-])
 def _point_in_polygon(x, y, polygon):
     inside = False
     n = len(polygon)
@@ -37,6 +16,7 @@ def _point_in_polygon(x, y, polygon):
                 inside = not inside
         x1, y1 = x2, y2
     return inside
+
 
 def generate_random_shape(height, width, kind="convex", vertices=None, seed=None):
     """
@@ -84,12 +64,14 @@ def printShape(localShape):
     for i in localShape:
         print(i)
 
-def rotate90CCW(pivotX, pivotY, x, y):
-    newX = -y + pivotY + pivotX
-    newY = x - pivotX + pivotY
-    return (newX, newY)
 
+def fitArray(shape):
+    row_mask = np.any(shape != 0, axis=1) 
+    col_mask = np.any(shape != 0, axis=0)
+    shape = shape[row_mask][:, col_mask]
+    return shape
 
+@njit
 def ProbeRight(shape):
     deltas = []
     lastAdd = 0
@@ -106,7 +88,8 @@ def ProbeRight(shape):
         prevAdd = lastAdd
     # print(deltas)
     return deltas
-             
+    
+@njit         
 def ProbeLeft(shape):
     deltas = []
     lastAdd = 0
@@ -124,6 +107,7 @@ def ProbeLeft(shape):
     return deltas
 
 
+@njit
 def ProbeTop(shape):
     deltas = []
     lastAdd = 0
@@ -137,10 +121,9 @@ def ProbeTop(shape):
         differenceDelta = prevAdd - lastAdd
         deltas.append(differenceDelta)
         prevAdd = lastAdd
-    # print(deltas)
     return deltas
 
-
+@njit
 def ProbeBottom(shape):
     deltas = []
     lastAdd = 0
@@ -155,10 +138,9 @@ def ProbeBottom(shape):
         differenceDelta = prevAdd - lastAdd
         deltas.append(differenceDelta)
         prevAdd = lastAdd
-    # print(deltas)
     return deltas
 
-
+@njit
 def DecodeShape(deltaList, width,height):
     cords = []
 
@@ -173,24 +155,31 @@ def DecodeShape(deltaList, width,height):
         y += -delta
         cords.append((index,y))
     
-    x = width
+    x = width-1
     for index, delta in enumerate(right):
-        x+=delta
+        x += delta
         cords.append((x,index))
         
-    y = height
+    y = height-1
     for index, delta in enumerate(bottom):
         y += delta
         cords.append((index,y))
     
     x = 0
     for index, delta in enumerate(left):
-        x+= -delta
+        x += -delta
         cords.append((x,index))
 
     return cords
 
-# shape = generate_random_shape(10, 10, kind="convex", seed=3)
+
+shape = generate_random_shape(50, 50,vertices=200, kind="convex", seed=352)
+# printShape(shape)
+print("STARTED RUNNING")
+shape = fitArray(shape)
+# print()
+printShape(shape)
+
 
 topDelta = ProbeTop(shape)
 rightDelta = ProbeRight(shape)
@@ -199,8 +188,23 @@ leftDelta = ProbeLeft(shape)
 
 combined = topDelta + rightDelta + bottomDelta + leftDelta
 print(combined)
+# print(topDelta)
+# print(rightDelta)
+# print(bottomDelta)
+# print(leftDelta)
+
+stats = {}
+
+for i in combined:
+    if i not in stats:
+        stats[i] = 0
+    stats[i] += 1
+
+sortedStats = dict(sorted(stats.items(), key=lambda item: item[1])[::-1])
+
+print(sortedStats)
+
 cords = DecodeShape(combined, len(shape[0]), len(shape))
-printShape(shape)
 
 
 
