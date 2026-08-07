@@ -161,7 +161,7 @@ def main():
 
     levels = 32
 
-    screenGrab = mss.mss()
+    screenGrab = mss.MSS()
 
     while(True):
         screenShot = getScreenShot(screenGrab)
