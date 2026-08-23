@@ -90,19 +90,18 @@ def buildData(grid, step):
 
 
 
-def buildSpatialHash(stats,cellSize):
+def buildSpatialHash(data,cellSize):
     
     # {
-    #   (cellX,cellY) : [top,left,width,height,area,mask,(centerX, centerY)]
+    #   (cellX,cellY) : [top,left,width,height,area,mask,(centerX, centerY),lux]
     #}
     
     spatialHash = {
         
     }
     
-    for i in range(len(stats)):
-        centerTup = stats[i][6]
-        
+    for i in range(len(data)):
+        centerTup = data[i][6]
         newX = int(centerTup[0] // cellSize)
         newY = int(centerTup[1] // cellSize)
         cell = (newX, newY)
@@ -110,20 +109,78 @@ def buildSpatialHash(stats,cellSize):
         if(cell not in spatialHash):
             spatialHash[cell] = []
         
-        spatialHash[cell].append(stats[i])
+        spatialHash[cell].append(data[i])
     
-    print(len(spatialHash.keys()))
+    # print(len(spatialHash.keys()))
+    return spatialHash
+
+def mergeViaSpatialHash(spatialHash, n=10, l=5):
+    updated = []
+    for key in spatialHash:
+        underN = []
+        for value in spatialHash[key]:
+            if(value[4] < n):
+                value.append(False)
+                underN.append(value)
+            else:
+                updated.append(value)
+                
+        
+        current = None
+        for pos in underN:
+            current = pos
+            if(current[8] == True):
+                continue
+                
+            for check in range(len(underN)):
+                checkAgainst = underN[check]
+                if(checkAgainst[8] == True):
+                    continue
+                if abs(int(current[7]) - int(checkAgainst[7])) > l:
+                    continue
+                
+                result = checkAABB(current, checkAgainst)
+                if(result):
+                    updateRegion(current, checkAgainst)
+                    checkAgainst[8] = True
+                    
+        for i in underN:
+            if(i[8] == False):
+                updated.append(i)
+    return updated
+
+def updateRegion(reg1, reg2):
+    reg1[0] = max(reg1[0], reg2[0])
+    reg1[1] = max(reg1[1], reg2[1])
+    reg1[2] += reg2[2]
+    reg1[3] += reg2[3]
+    reg1[4] += reg2[4]
+    
+    if(type(reg1[5]) is int):
+        reg1[5] = [reg1[5], reg2[5]]
+    else:
+        reg1[5].append(reg2[5])
+        
+
+def checkAABB(pos1, pos2):
+    if(pos1[0] < pos2[0] + pos2[2] + 1 and pos1[0] + pos1[2] + 1 > pos2[0] and  # noqa: SIM103
+       pos1[1] < pos2[1] + pos2[3] + 1 and pos1[1] + pos1[3] + 1 > pos2[1]):
+        return True
+    return False
 
 
 def prepareData(stats, labelAmount, centroids, greyImage):
     finalList = stats.tolist()
-    
+    # print(labelAmount)
     for i in range(labelAmount):
         sliced = finalList[i]
         sliced.append(i)
         center = centroids[i]
-        lux = greyImage[center[0]][center[1]]
-        sliced.append(tuple(centroids))
+        
+        intCenter = (int(center[0]), int(center[1]))
+        # print(intCenter)
+        lux = greyImage[int(center[1]),int(center[0])] #numpy is y,x
+        sliced.append(intCenter)
         sliced.append(lux)
         
     return finalList
@@ -132,11 +189,12 @@ def prepareData(stats, labelAmount, centroids, greyImage):
 
 def mergeSmallAreas(labels, stats, labelAmount, centroids, greyImage):
 
-    data = prepareData(stats, labels, centroids, greyImage)
-    buildSpatialHash(data,10)
+    data = prepareData(stats, labelAmount, centroids, greyImage)
+    spatialHash = buildSpatialHash(data,20)
+    data = mergeViaSpatialHash(spatialHash, 5, 5)
     count = len([x for x in data if x[4] < 20])
 
-    print(f"Total : {labelAmount}, Under 20 : {count}, Total Above 20 : {labelAmount - count}") 
+    print(f"Total : {len(data)}, Under 20 : {count}, Total Above 20 : {len(data) - count}") 
 
 def quantImage(image, levels=32):
     lower = np.percentile(image, 5)
@@ -159,7 +217,7 @@ def main():
 
     cellSize = 10
 
-    levels = 32
+    levels = 16
 
     screenGrab = mss.MSS()
 
@@ -171,12 +229,12 @@ def main():
         rgb_image = np.array(screenShot)
         
         try:
-            greyImage = cv2.cvtColor(rgb_image, cv2.COLOR_RGB2GRAY)
+            ogGreyImage = cv2.cvtColor(rgb_image, cv2.COLOR_RGB2GRAY)
         except cv2.error:
             continue
         
         
-        greyImage = cv2.resize(greyImage, (1920, 1080), interpolation=cv2.INTER_AREA)
+        greyImage = cv2.resize(ogGreyImage, (1920, 1080), interpolation=cv2.INTER_AREA)
         
         # greyImage = cv2.resize(greyImage, (0, 0), fx=scalingX, fy=scalingY)
         # greyImage = cv2.GaussianBlur(greyImage, (3,3), 1)
@@ -184,10 +242,10 @@ def main():
 
         
         labeled_grid, total_regions, stats, centers = buildData(quantized, levels-1)
-        # mergeSmallAreas(labeled_grid, stats, total_regions,centers,greyImage)
+        mergeSmallAreas(labeled_grid, stats, total_regions, centers, greyImage)
 
         
-        display_region_comparison(quantized, labeled_grid, total_regions, levels)
+        # display_region_comparison(quantized, labeled_grid, total_regions, levels)
         # print(total_regions)
 
 

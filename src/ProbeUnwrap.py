@@ -1,7 +1,6 @@
 # This method of unwrapping uses more bits but remains loseless as well as its implementation uses more optimized calls
 import numpy as np
-from numba import njit
-import statistics
+
 
 
 def _point_in_polygon(x, y, polygon):
@@ -71,7 +70,7 @@ def fitArray(shape):
     shape = shape[row_mask][:, col_mask]
     return shape
 
-@njit
+
 def ProbeRight(shape):
     deltas = []
     lastAdd = 0
@@ -88,8 +87,7 @@ def ProbeRight(shape):
         prevAdd = lastAdd
     # print(deltas)
     return deltas
-    
-@njit         
+       
 def ProbeLeft(shape):
     deltas = []
     lastAdd = 0
@@ -107,7 +105,6 @@ def ProbeLeft(shape):
     return deltas
 
 
-@njit
 def ProbeTop(shape):
     deltas = []
     lastAdd = 0
@@ -123,7 +120,7 @@ def ProbeTop(shape):
         prevAdd = lastAdd
     return deltas
 
-@njit
+
 def ProbeBottom(shape):
     deltas = []
     lastAdd = 0
@@ -140,7 +137,6 @@ def ProbeBottom(shape):
         prevAdd = lastAdd
     return deltas
 
-@njit
 def DecodeShape(deltaList, width,height):
     cords = []
 
@@ -176,68 +172,64 @@ def DecodeShape(deltaList, width,height):
 shape = generate_random_shape(50, 50,vertices=200, kind="convex", seed=352)
 # printShape(shape)
 print("STARTED RUNNING")
-shape = fitArray(shape)
-# print()
-printShape(shape)
 
+def EncodeShape(shape):
+    shape = fitArray(shape)
+    topDelta = ProbeTop(shape)
+    rightDelta = ProbeRight(shape)
+    bottomDelta = ProbeBottom(shape)
+    leftDelta = ProbeLeft(shape)
 
-topDelta = ProbeTop(shape)
-rightDelta = ProbeRight(shape)
-bottomDelta = ProbeBottom(shape)
-leftDelta = ProbeLeft(shape)
+    combined = topDelta + rightDelta + bottomDelta + leftDelta
+    print(combined)
+    return combined
+    
+EncodeShape(shape)
 
-combined = topDelta + rightDelta + bottomDelta + leftDelta
-print(combined)
-# print(topDelta)
-# print(rightDelta)
-# print(bottomDelta)
-# print(leftDelta)
+# stats = {}
 
-stats = {}
+# for i in combined:
+#     if i not in stats:
+#         stats[i] = 0
+#     stats[i] += 1
 
-for i in combined:
-    if i not in stats:
-        stats[i] = 0
-    stats[i] += 1
+# sortedStats = dict(sorted(stats.items(), key=lambda item: item[1])[::-1])
 
-sortedStats = dict(sorted(stats.items(), key=lambda item: item[1])[::-1])
-
-print(sortedStats)
-
-cords = DecodeShape(combined, len(shape[0]), len(shape))
+# print(sortedStats)
 
 
 
-import numpy as np
-import matplotlib.pyplot as plt
 
-def plot_coordinates_as_image(coords, width=None, height=None, cmap='gray',
-                              figsize=(6,6), ax=None):
-    """
-    Rasterize coords into a binary image and display with imshow.
-    coords: list of (x,y)
-    width/height: optional - if None, inferred from max coords + 1
-    """
-    if not coords:
-        raise ValueError("coords empty")
-    xs = [c[0] for c in coords]
-    ys = [c[1] for c in coords]
-    w = width if width is not None else max(xs) + 1
-    h = height if height is not None else max(ys) + 1
-    img = np.full((h, w), 255, dtype=np.uint8)
-    for x, y in coords:
-        if 0 <= x < w and 0 <= y < h:
-            img[y, x] = 0
-    own_ax = ax is None
-    if own_ax:
-        fig, ax = plt.subplots(figsize=figsize)
-    ax.imshow(img, cmap=cmap, origin='upper', interpolation='nearest')
-    ax.set_xticks([])
-    ax.set_yticks([])
-    if own_ax:
-        plt.show()
-    return ax
+# import numpy as np
+# import matplotlib.pyplot as plt
+
+# def plot_coordinates_as_image(coords, width=None, height=None, cmap='gray',
+#                               figsize=(6,6), ax=None):
+#     """
+#     Rasterize coords into a binary image and display with imshow.
+#     coords: list of (x,y)
+#     width/height: optional - if None, inferred from max coords + 1
+#     """
+#     if not coords:
+#         raise ValueError("coords empty")
+#     xs = [c[0] for c in coords]
+#     ys = [c[1] for c in coords]
+#     w = width if width is not None else max(xs) + 1
+#     h = height if height is not None else max(ys) + 1
+#     img = np.full((h, w), 255, dtype=np.uint8)
+#     for x, y in coords:
+#         if 0 <= x < w and 0 <= y < h:
+#             img[y, x] = 0
+#     own_ax = ax is None
+#     if own_ax:
+#         fig, ax = plt.subplots(figsize=figsize)
+#     ax.imshow(img, cmap=cmap, origin='upper', interpolation='nearest')
+#     ax.set_xticks([])
+#     ax.set_yticks([])
+#     if own_ax:
+#         plt.show()
+#     return ax
 
 
 
-plot_coordinates_as_image(cords)
+# plot_coordinates_as_image(cords)
