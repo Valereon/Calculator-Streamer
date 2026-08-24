@@ -114,6 +114,8 @@ def buildSpatialHash(data,cellSize):
     # print(len(spatialHash.keys()))
     return spatialHash
 
+
+#issue! this does not account for neighboring nodes in the spatial hash leading to harsh boundaries
 def mergeViaSpatialHash(spatialHash, n=10, l=5):
     updated = []
     for key in spatialHash:
@@ -150,16 +152,16 @@ def mergeViaSpatialHash(spatialHash, n=10, l=5):
     return updated
 
 def updateRegion(reg1, reg2):
-    reg1[0] = max(reg1[0], reg2[0])
-    reg1[1] = max(reg1[1], reg2[1])
-    reg1[2] += reg2[2]
-    reg1[3] += reg2[3]
-    reg1[4] += reg2[4]
+    reg1[0] = max(reg1[0], reg2[0]) # top
+    reg1[1] = max(reg1[1], reg2[1]) # left
+    reg1[2] += reg2[2] # width?
+    reg1[3] += reg2[3] # height?
+    reg1[4] += reg2[4] # area
     
-    if(type(reg1[5]) is int):
-        reg1[5] = [reg1[5], reg2[5]]
+    if(type(reg1[5]) is int): # if first mask then make the mask a list
+        reg1[5] = [reg1[5], reg2[5]] # mask
     else:
-        reg1[5].append(reg2[5])
+        reg1[5].append(reg2[5]) # else just append to the mask list
         
 
 def checkAABB(pos1, pos2):
@@ -188,12 +190,11 @@ def prepareData(stats, labelAmount, centroids, greyImage):
 
 
 def mergeSmallAreas(labels, stats, labelAmount, centroids, greyImage):
-
     data = prepareData(stats, labelAmount, centroids, greyImage)
     spatialHash = buildSpatialHash(data,20)
-    data = mergeViaSpatialHash(spatialHash, 5, 5)
-    count = len([x for x in data if x[4] < 20])
-
+    newData = mergeViaSpatialHash(spatialHash, 5, 5)
+    count = len([x for x in newData if x[4] < 20])
+    print(data[50])
     print(f"Total : {len(data)}, Under 20 : {count}, Total Above 20 : {len(data) - count}") 
 
 def quantImage(image, levels=32):
