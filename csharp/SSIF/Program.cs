@@ -10,12 +10,12 @@ class Program
         // this fixes if your display is at a higher dpi than 100% in windows 
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
-        Application.SetHighDpiMode(HighDpiMode.SystemAware); 
+        Application.SetHighDpiMode(HighDpiMode.SystemAware);
 
 
         Encoder encoder = new();
 
-        Vector2 targetRes = new System.Numerics.Vector2(1920, 1200);
-        encoder.Encode(targetRes,32);
+        Vector2 targetRes = new System.Numerics.Vector2(1920, 1080);
+        encoder.Encode(targetRes, 32, 5, 95);
     }
 }
