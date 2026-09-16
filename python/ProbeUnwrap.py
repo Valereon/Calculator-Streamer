@@ -169,7 +169,23 @@ def DecodeShape(deltaList, width,height):
     return cords
 
 
-shape = generate_random_shape(50, 50,vertices=200, kind="convex", seed=352)
+# shape = generate_random_shape(50, 50,vertices=200, kind="convex", seed=352)
+# shape = np.array([
+#     [0,1,0,0,1,1,1,0],
+#     [1,1,1,1,0,0,1,0],
+#     [1,0,0,0,0,1,0,0],
+#     [1,1,0,0,0,0,1,0],
+#     [0,1,0,0,0,0,1,0],
+#     [0,1,0,0,0,0,1,0],
+#     [0,0,1,1,1,1,1,0]    
+# ])
+shape = np.array([
+    [1,1,1],
+    [1,0,1],
+    [0,1,0]
+])
+
+
 # printShape(shape)
 print("STARTED RUNNING")
 
@@ -184,7 +200,8 @@ def EncodeShape(shape):
     print(combined)
     return combined
     
-EncodeShape(shape)
+combined = EncodeShape(shape)
+print(DecodeShape(combined, shape.shape[0], shape.shape[1]))
 
 # stats = {}
 

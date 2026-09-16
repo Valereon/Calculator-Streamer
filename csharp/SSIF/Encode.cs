@@ -1,31 +1,24 @@
 using System.Numerics;
-using System.Security.Cryptography.X509Certificates;
-using System.Text.RegularExpressions;
-using System.Windows.Input;
-using System.Windows.Media;
 using OpenCvSharp;
 using OpenCvSharp.GdipExtensions;
 
 class Encoder
 {
-    public void Encode(Vector2 targetRes, int quantLevels = 32, int lowPercentile = 5, int highPercentile = 95, int runSize = 10)
+    public void Encode(Vector2 targetRes, int quantLevels = 32, int runSize = 1, int lookBackAmount = 1)
     {
         // Thread.Sleep(3000);
-        Bitmap screenShot = Utilities.GetScreenShot();
+        // Bitmap screenShot = Utilities.GetScreenShot();
+        Bitmap screenShot = Cv2.ImRead("nature.png").ToBitmap();
+        var watch = System.Diagnostics.Stopwatch.StartNew();
         // Utilities.DisplayImage(screenShot);
         Mat resized = ResizeImage(screenShot, targetRes);
         Mat greyScale = new();
         Cv2.CvtColor(resized, greyScale, ColorConversionCodes.BGRA2GRAY);
 
-        // 0 is low end, 1 is high end
-        int[] actualPercentiles = AnalyzeImage(greyScale, lowPercentile, highPercentile);
 
-        float factor = QuantizeImageNoRemap(greyScale, actualPercentiles[0], actualPercentiles[1], quantLevels);
+        float factor = QuantizeImageNoRemap(greyScale, quantLevels);
 
-        List<List<int>> thing = BFSConnect(greyScale, 2);
-
-
-
+        List<List<int>> thing = BFSConnect(greyScale);
 
 
         // RemapImage(greyScale, factor);
@@ -50,8 +43,7 @@ class Encoder
             int colNext = thing[i + 1][0] % rgb.Cols;
             byte lum = greyRows[row][col];
             byte lumNext = greyRows[rowNext][colNext];
-
-            if (thing[i].Count < 15 && thing[i + 1].Count < 15 && Math.Abs(lum - lumNext) <= 5)
+            if (thing[i].Count < thing.Average(key => key.Count) && thing[i + 1].Count < 15 && Math.Abs(lum - lumNext) <= 5)
             {
                 newGroups.Add(thing[i].Concat(thing[i + 1]).ToList());
             }
@@ -62,13 +54,15 @@ class Encoder
             }
 
         }
+        int subDivisons = 0;
         foreach (List<int> groups in newGroups)
         {
             List<Vec3b> colorsInRegion = new();
-            if (groups.Count > 100)
+            if (groups.Count > newGroups.Average(key => key.Count))
             {
                 groups.Sort();
 
+                List<Vec3b> lookBack = new();
                 for (int j = 0; j < groups.Count; j += runSize)
                 {
 
@@ -80,13 +74,19 @@ class Encoder
                         int col = groups[j + i] % rgb.Cols;
                         colors.Add(ogImageRows[row][col]);
                     }
+                    colors.InsertRange(0, lookBack);
                     Vec3b color = new((byte)colors.Average(key => key.Item0), (byte)colors.Average(key => key.Item1), (byte)colors.Average(key => key.Item2));
+
                     for (int z = 0; z < chunkSize; z++)
                     {
                         int row = groups[j + z] / rgb.Cols;
                         int col = groups[j + z] % rgb.Cols;
                         imageRows[row][col] = color;
                     }
+
+                    lookBack.Clear();
+                    lookBack.AddRange(colors.TakeLast(lookBackAmount));
+                    subDivisons += 1;
                 }
             }
             else
@@ -110,17 +110,59 @@ class Encoder
 
 
         }
+        
+        watch.Stop();
+        Dictionary<string, int> combos = new();
 
+        foreach (List<int> group in newGroups)
+        {
+            var groupList = group.ToList(); // Materialize once
 
-        Console.WriteLine(newGroups.Count);
-        Console.WriteLine(newGroups.Average(key => key.Count));
+            int c = (int)Math.Round(groupList.Average(key => (double)(key % rgb.Cols)));
+            int r = (int)Math.Round(groupList.Average(key => (double)(key / rgb.Cols)));
 
+            List<Vec2i> cords = new();
+            foreach (int cord in groupList)
+            {
+                int x = (cord % rgb.Cols) - c;
+                int y = (cord / rgb.Cols) - r;
+                cords.Add(new Vec2i(x, y));
+            }
+
+            // 1. Sort points so iteration order doesn't break uniqueness
+            // (Assumes Vec2i has X and Y properties)
+            var sortedCords = cords.OrderBy(v => v.Item0).ThenBy(v => v.Item1).ToList();
+
+            // 2. Build a value-based key string for the dictionary
+            string shapeKey = string.Join(";", sortedCords.Select(v => $"{v.Item0},{v.Item1}"));
+
+            if (combos.ContainsKey(shapeKey))
+                combos[shapeKey] += 1;
+            else
+                combos[shapeKey] = 1;
+        }
+
+        Console.WriteLine($"Total Groups : {newGroups.Count}");
+        Console.WriteLine($"Average Area : {newGroups.Average(key => key.Count)}");
+        Console.WriteLine($"Groups with more than 100 area : {newGroups.Where(key => key.Count >= 100).ToArray().Length}");
+        Console.WriteLine($"1 pixel area : {newGroups.Where(key => key.Count == 1).ToArray().Length}");
+        Console.WriteLine($"Groups with <= 10 : {newGroups.Where(key => key.Count <= 10 && key.Count != 1).ToArray().Length}");
+        Console.WriteLine($"Shapes with more than 10 apperances : {combos.Values.Count(key => key >= 10)}");
+        Console.WriteLine($"total shapes : {combos.Keys.Count}");
+        Console.WriteLine($"top 15 shape appearance frequency : {string.Join(", ", combos.Values.OrderByDescending(key => key).Take(15))}");
+        Console.WriteLine(watch.ElapsedMilliseconds);
+        
+        Console.WriteLine(Cv2.PSNR(resized, rgb));
+        // RemapImage(greyScale, factor);
         Utilities.DisplayImage(BitmapConverter.ToBitmap(rgb));
+        
 
+
+        Cv2.ImWrite("compare.jpg", resized);
+        Cv2.ImWrite("myformat.png", rgb);
     }
 
-
-    private List<List<int>> BFSConnect(Mat image, int tolerance)
+    private List<List<int>> BFSConnect(Mat image)
     {
         int[][] directions =
         {
@@ -129,7 +171,7 @@ class Encoder
             [1,0],
             [-1,0]
         };
-
+        int merges = 0;
         int rowCount = image.Rows;
         int colsCount = image.Cols;
         bool[] visited = new bool[rowCount * colsCount];
@@ -178,17 +220,14 @@ class Encoder
 
                         int nextValue = imageRows[nextRow][nextCol];
 
-                        if (Math.Abs(startLum - nextValue) <= tolerance)
+                        if (startLum == nextValue)
                         {
 
                             visited[index] = true;
                             positions.Enqueue(index);
+                            merges += 1;
                         }
-
-
                     }
-
-
                 }
                 listOfregions.Add(group);
             }
@@ -241,9 +280,8 @@ class Encoder
         }
     }
     // this means that once quanted to N levels it will not remap it and will instead be 0-N instead of 0-255
-    private float QuantizeImageNoRemap(Mat image, int lowEnd, int highEnd, int levels)
+    private float QuantizeImageNoRemap(Mat image, int levels)
     {
-        float range = (float)Math.Max(highEnd - lowEnd, 1.0);
         float factor = 255f / (levels - 1);
 
         MatRowAccessor<byte> col = image.AsRows<byte>();
@@ -253,7 +291,6 @@ class Encoder
             for (int j = 0; j < row.Length; j++)
             {
                 byte curPixel = row[j];
-                curPixel = (byte)Math.Clamp((curPixel - lowEnd) * (255.0 / range), 0, 255);
                 curPixel = (byte)Math.Round(curPixel / factor);
                 row[j] = curPixel;
             }
