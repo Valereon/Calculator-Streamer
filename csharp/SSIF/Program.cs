@@ -16,6 +16,6 @@ class Program
         Encoder encoder = new();
 
         Vector2 targetRes = new Vector2(1920, 1080);
-        encoder.Encode(targetRes, 2);
+        encoder.Encode(targetRes, 4);
     }
 }

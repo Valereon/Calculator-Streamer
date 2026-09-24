@@ -95,7 +95,7 @@ def main():
     screenGrab = mss.mss()
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)  # UDP
 
-    for i in range(60):
+    while True:
         screenShot = getScreenShot(screenGrab)
         if screenShot is None:
             continue
@@ -124,9 +124,9 @@ def main():
         cv2.imshow("Sobel Live", edges)
         # print(final)
 
-        if cv2.waitKey(1) & 0xFF == ord("q"):
-            break
-        # sock.sendto(bytes("END", "utf-8"), ("127.0.0.1", 25566))
+        # if cv2.waitKey(1) & 0xFF == ord("q"):
+            # break
+        sock.sendto(bytes("END", "utf-8"), ("127.0.0.1", 25566))
         print("Ran")
 
 

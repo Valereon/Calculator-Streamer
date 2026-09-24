@@ -4,7 +4,7 @@ using OpenCvSharp.GdipExtensions;
 
 class Encoder
 {
-    public void Encode(Vector2 targetRes, int quantLevels = 32, int runSize = 1, int lookBackAmount = 1)
+    public void Encode(Vector2 targetRes, int quantLevels = 32)
     {
         // Thread.Sleep(3000);
         // Bitmap screenShot = Utilities.GetScreenShot();
@@ -43,7 +43,7 @@ class Encoder
             int colNext = thing[i + 1][0] % rgb.Cols;
             byte lum = greyRows[row][col];
             byte lumNext = greyRows[rowNext][colNext];
-            if (thing[i].Count < thing.Average(key => key.Count) && thing[i + 1].Count < 15 && Math.Abs(lum - lumNext) <= 5)
+            if (thing[i].Count < 15 && thing[i + 1].Count < 15 && Math.Abs(lum - lumNext) <= 5)
             {
                 newGroups.Add(thing[i].Concat(thing[i + 1]).ToList());
             }
@@ -54,7 +54,7 @@ class Encoder
             }
 
         }
-        int subDivisons = 0;
+
         foreach (List<int> groups in newGroups)
         {
             List<Vec3b> colorsInRegion = new();
@@ -62,31 +62,41 @@ class Encoder
             {
                 groups.Sort();
 
-                List<Vec3b> lookBack = new();
-                for (int j = 0; j < groups.Count; j += runSize)
+                int startRow = groups[0] / rgb.Cols;
+                int startCol = groups[0] % rgb.Cols;
+                Vec3b startColor = ogImageRows[startRow][startCol];
+
+                // int endRow = groups[groups.Count - 1] / rgb.Cols;
+                // int endCol = groups[groups.Count - 1] % rgb.Cols;
+                // Vec3b endColor = ogImageRows[endRow][endCol];
+
+                List<Vec3b> colors = [startColor];
+                for(int i = 0; i < groups.Count; i++)
                 {
+                    int row = groups[i] / rgb.Cols;
+                    int col = groups[i] % rgb.Cols;
+                    Vec3b currentColor = ogImageRows[row][col];
+                    Vec3b lastColor = colors.TakeLast(1).ToArray()[0];
 
-                    int chunkSize = Math.Min(runSize, groups.Count - j);
-                    List<Vec3b> colors = new();
-                    for (int i = 0; i < chunkSize; i++)
-                    {
-                        int row = groups[j + i] / rgb.Cols;
-                        int col = groups[j + i] % rgb.Cols;
-                        colors.Add(ogImageRows[row][col]);
-                    }
-                    colors.InsertRange(0, lookBack);
-                    Vec3b color = new((byte)colors.Average(key => key.Item0), (byte)colors.Average(key => key.Item1), (byte)colors.Average(key => key.Item2));
+                    float dist = (float)Math.Sqrt(Math.Pow(lastColor.Item0 - currentColor.Item0,2) + Math.Pow(lastColor.Item1 - currentColor.Item1,2) + Math.Pow(lastColor.Item2 - currentColor.Item2,2));
+                    // Console.WriteLine(dist);
 
-                    for (int z = 0; z < chunkSize; z++)
-                    {
-                        int row = groups[j + z] / rgb.Cols;
-                        int col = groups[j + z] % rgb.Cols;
-                        imageRows[row][col] = color;
-                    }
+                    colors.Add(currentColor);
 
-                    lookBack.Clear();
-                    lookBack.AddRange(colors.TakeLast(lookBackAmount));
-                    subDivisons += 1;
+                }
+
+
+                for (int j = 0; j < groups.Count; j++)
+                {
+                    // Global progress from 0.0 to 1.0
+                    float t = (float)j / (groups.Count - 1);
+
+                    // Get the interpolated color from your custom N-color palette
+                    Vec3b finalColor = EvaluateGradient(colors, t);
+
+                    int row = groups[j] / rgb.Cols;
+                    int col = groups[j] % rgb.Cols;
+                    imageRows[row][col] = finalColor;
                 }
             }
             else
@@ -110,7 +120,7 @@ class Encoder
 
 
         }
-        
+
         watch.Stop();
         Dictionary<string, int> combos = new();
 
@@ -129,11 +139,10 @@ class Encoder
                 cords.Add(new Vec2i(x, y));
             }
 
-            // 1. Sort points so iteration order doesn't break uniqueness
-            // (Assumes Vec2i has X and Y properties)
+
             var sortedCords = cords.OrderBy(v => v.Item0).ThenBy(v => v.Item1).ToList();
 
-            // 2. Build a value-based key string for the dictionary
+
             string shapeKey = string.Join(";", sortedCords.Select(v => $"{v.Item0},{v.Item1}"));
 
             if (combos.ContainsKey(shapeKey))
@@ -144,22 +153,44 @@ class Encoder
 
         Console.WriteLine($"Total Groups : {newGroups.Count}");
         Console.WriteLine($"Average Area : {newGroups.Average(key => key.Count)}");
-        Console.WriteLine($"Groups with more than 100 area : {newGroups.Where(key => key.Count >= 100).ToArray().Length}");
+        Console.WriteLine($"Groups with more than 100 area : {combos.Values.Where(key => key > 100).ToArray().Length}");
         Console.WriteLine($"1 pixel area : {newGroups.Where(key => key.Count == 1).ToArray().Length}");
         Console.WriteLine($"Groups with <= 10 : {newGroups.Where(key => key.Count <= 10 && key.Count != 1).ToArray().Length}");
         Console.WriteLine($"Shapes with more than 10 apperances : {combos.Values.Count(key => key >= 10)}");
         Console.WriteLine($"total shapes : {combos.Keys.Count}");
         Console.WriteLine($"top 15 shape appearance frequency : {string.Join(", ", combos.Values.OrderByDescending(key => key).Take(15))}");
         Console.WriteLine(watch.ElapsedMilliseconds);
-        
+
         Console.WriteLine(Cv2.PSNR(resized, rgb));
-        // RemapImage(greyScale, factor);
+        RemapImage(greyScale, factor);
         Utilities.DisplayImage(BitmapConverter.ToBitmap(rgb));
-        
+        // Utilities.DisplayImage(BitmapConverter.ToBitmap(greyScale));
+
 
 
         Cv2.ImWrite("compare.jpg", resized);
         Cv2.ImWrite("myformat.png", rgb);
+    }
+    //gemeni 
+    Vec3b EvaluateGradient(List<Vec3b> colorStops, float t)
+    {
+        if (colorStops.Count == 0) return new Vec3b(0, 0, 0);
+        if (colorStops.Count == 1 || t <= 0.0f) return colorStops[0];
+        if (t >= 1.0f) return colorStops[colorStops.Count - 1];
+
+        // Scale t to the number of segments (e.g., 3 colors = 2 segments)
+        float scaled = t * (colorStops.Count - 1);
+        int index = (int)scaled;          // Which color we are starting from
+        float localT = scaled - index;    // How far we are between color[index] and color[index + 1]
+
+        Vec3b c1 = colorStops[index];
+        Vec3b c2 = colorStops[index + 1];
+
+        byte r = (byte)(c1.Item0 + (c2.Item0 - c1.Item0) * localT);
+        byte g = (byte)(c1.Item1 + (c2.Item1 - c1.Item1) * localT);
+        byte b = (byte)(c1.Item2 + (c2.Item2 - c1.Item2) * localT);
+
+        return new Vec3b(r, g, b);
     }
 
     private List<List<int>> BFSConnect(Mat image)
