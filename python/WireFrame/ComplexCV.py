@@ -65,12 +65,14 @@ def encodeImageAsDeltas(image):
 
 
 def sendFrame(frame, controlCode, device):
+    sizeOf = 0
     device.write(int(1).to_bytes(1, "little"))
     for i in frame:
         i.insert(0, len(i))
         i.insert(0, controlCode)
         device.write(bytes(i))
-
+        sizeOf += len(bytes(i))
+    print(sizeOf//1024)
 
 
 def main():
@@ -89,11 +91,10 @@ def main():
     device.write(bytes(setup))
 
     while True:
-        if frameCount % frameSkip > 0:
-            # print("SKIP")
-            print(frameCount % frameSkip)
-            frameCount += 1
-            continue
+        # if frameCount % frameSkip > 0:
+        #     # print("SKIP")
+        #     frameCount += 1
+        #     continue
         screenShot, inputX, inputY = getScreenShot(screenGrab)
         scaledX = targetResX / inputX
         scaledY = targetResY / inputY
@@ -113,7 +114,6 @@ def main():
         edges = cv2.Canny(croppedImage, lower, upper)
         # positions = encodeImageAsDeltas(edges)
         positions = encodeImageAsPositions(edges)
-        frameCount += 1
 
         # if frameCount % deltaSkip > 0:
         #     delta = buildDeltaFrame(prevFrame, positions)
