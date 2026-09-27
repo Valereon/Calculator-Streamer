@@ -1,11 +1,11 @@
 using System.Numerics;
 using OpenCvSharp;
 using OpenCvSharp.GdipExtensions;
-using System.IO.Ports;
 using System.Diagnostics;
-using System.Security.Cryptography;
-using System.IO;
-using System.Xml.XPath;
+using System.Net.Sockets;
+using System.Text;
+using System.Net;
+using HPPH;
 
 
 class Encoder
@@ -15,6 +15,11 @@ class Encoder
         Stopwatch watch = Stopwatch.StartNew();
         int frames = 0;
 
+        string targetIp = "127.0.0.1";
+        int port = 25566;
+        Socket udpClient = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
+
+        IPEndPoint endPoint = new IPEndPoint(IPAddress.Parse(targetIp), port);
         VideoCapture cap = new VideoCapture(0, VideoCaptureAPIs.DSHOW);
         cap.Set(VideoCaptureProperties.FrameWidth, 1920);
         cap.Set(VideoCaptureProperties.FrameHeight, 1080);
@@ -46,10 +51,16 @@ class Encoder
             Mat edges = new Mat();
             // Cv2.GaussianBlur(greyScale, greyScale, new(5, 5), 1.4);
             double otsuThresh = Cv2.Threshold(greyScale, edges, 0, 255, ThresholdTypes.Binary | ThresholdTypes.Otsu);
-            Cv2.Canny(greyScale, edges, otsuThresh * .5f, otsuThresh);
+            Cv2.Canny(greyScale, edges, otsuThresh, otsuThresh * 2);
 
 
-            List<List<int>> connected = TraceLines(edges);
+
+
+
+
+
+            List<List<int>> connected = CustomLineTrace(edges);
+
             int colsCount = edges.Cols;
             List<List<Vec2i>> lines = new();
             for (int line = 0; line < connected.Count; line++)
@@ -59,27 +70,162 @@ class Encoder
                 {
                     int actRow = connected[line][point] / colsCount;
                     int actCol = connected[line][point] % colsCount;
-                    points.Add(new Vec2i(actRow, actCol));
+                    points.Add(new Vec2i(actCol, actRow));
                 }
+                // points = points.OrderBy(key => key.Item0).ThenBy(key => key.Item1).ToList();
 
                 lines.Add(points);
             }
 
-            List<List<Vec2i>> decimatedLines = DecimateLines(lines, 5f);
+            List<List<Vec2i>> decimatedLines = DecimateLines(lines, 10f);
 
+            Mat recon = DrawLines(decimatedLines, edges.Cols, edges.Rows);
+            
+            foreach (List<Vec2i> line in decimatedLines)
+            {
+                string message = "";
+                foreach (Vec2i point in line)
+                {
+                    string tempMess = $"{(int)point.Item0},{(int)point.Item1};";
+                    if(tempMess == ",;")
+                        continue;
+                    message += tempMess;
+                }
+                message += "ENDLINE";
+                if(message == "ENDLINE")
+                    continue;
+                byte[] data = Encoding.UTF8.GetBytes(message);
+                udpClient.SendTo(data, endPoint);
+            }
+            byte[] endmess = Encoding.UTF8.GetBytes("END");
+            udpClient.SendTo(endmess, endPoint);
 
-
-
-            // Cv2.ImWrite("test.jpg", edges);
             watch.Stop();
-            Cv2.ImShow("wah", edges);
+            Cv2.ImShow("wah", recon);
+            Cv2.ImWrite("what.png", recon);
             Cv2.WaitKey(1);
-            // Cv2.DestroyAllWindows();
-            Console.WriteLine($"Frame Time : {watch.ElapsedMilliseconds} :: Lines {(int)connected.Average(inner => inner.Count)} :: decmiated lines {(int) decimatedLines.Average(inner => inner.Count)}");
+            Console.WriteLine($"Frame Time : {watch.ElapsedMilliseconds} :: Lines {(int)connected.Average(inner => inner.Count)} :: decmiated lines {decimatedLines.Count}");
         }
-        // // Cv2.ImWrite("myformat.png", rgb);
+    }
+    private byte[] Serialize(List<List<int>> lines)
+    {
+        return [];
     }
 
+    private Mat DrawLines(List<List<Vec2i>> lines, int width, int height)
+    {
+        Mat output = Mat.Zeros(height, width, MatType.CV_8UC1);
+
+        foreach (List<Vec2i> line in lines)
+        {
+            if (line.Count < 2)
+                continue;
+
+            OpenCvSharp.Point[] points = new OpenCvSharp.Point[line.Count];
+
+            for (int i = 0; i < line.Count; i++)
+            {
+                points[i] = new OpenCvSharp.Point(
+                    line[i].Item0, // x
+                    line[i].Item1  // y
+                );
+            }
+
+            Cv2.Polylines(
+                output,
+                new[] { points },
+                false,              // do not close the line
+                Scalar.White,
+                1,
+                LineTypes.Link8
+            );
+        }
+
+        return output;
+    }
+    private float Distance(Vec2i start, Vec2i end)
+    {
+        return MathF.Sqrt((float)(MathF.Pow(end.Item0 - start.Item0, 2) + Math.Pow(end.Item1 - start.Item1, 2)));
+    }
+    // basically a greedy search that given the 4 connectedness 
+    private List<List<int>> CustomLineTrace(Mat src)
+    {
+
+
+        int[][] directions =
+         {
+            [0,1],
+            [0,-1],
+            [1,0],
+            [-1,0]
+        };
+        int rowCount = src.Rows;
+        int colsCount = src.Cols;
+        bool[] visited = new bool[rowCount * colsCount];
+
+        List<List<int>> listOfregions = new();
+
+        MatRowAccessor<byte> imageRows = src.AsRows<byte>();
+
+        for (int r = 0; r < rowCount; r++)
+        {
+            for (int c = 0; c < colsCount; c++)
+            {
+                int startIndex = r * colsCount + c;
+                if (visited[startIndex] == true)
+                    continue;
+
+                visited[startIndex] = true;
+
+                if (imageRows[r][c] == 0)
+                    continue;
+
+                List<int> group = new();
+
+                int innerR = r;
+                int innerC = c;
+                while (true)
+                {
+                    int node = innerR * colsCount + innerC;
+                    int row = node / colsCount;
+                    int col = node % colsCount;
+
+                    bool isFound = false;
+                    foreach (int[] direction in directions)
+                    {
+                        int nextRow = row + direction[0];
+                        int nextCol = col + direction[1];
+
+                        if (!IsPointValid(nextRow, nextCol, rowCount, colsCount))
+                            continue;
+
+                        int index = nextRow * colsCount + nextCol;
+
+                        if (visited[index])
+                            continue;
+
+
+                        int nextValue = imageRows[nextRow][nextCol];
+
+                        if (nextValue > 0)
+                        {
+                            visited[index] = true;
+                            isFound = true;
+                            group.Add(index);
+                            innerR += direction[0];
+                            innerC += direction[1];
+                            break;
+                        }
+                    }
+                    if(!isFound)
+                        break;
+                }
+                listOfregions.Add(group);
+
+            }
+        }
+        return listOfregions;
+    }
     private List<List<int>> TraceLines(Mat src)
     {
         int[][] directions =
@@ -88,13 +234,11 @@ class Encoder
             [0,-1],
             [1,0],
             [-1,0],
-
-            [1,1],
-            [1,-1],
-            [1,1],
-            [-1,1]
+            // [1,1],
+            // [1,-1],
+            // [-1,1],
+            // [-1,-1]
         };
-        int merges = 0;
         int rowCount = src.Rows;
         int colsCount = src.Cols;
         bool[] visited = new bool[rowCount * colsCount];
@@ -134,10 +278,10 @@ class Encoder
                         int nextRow = row + direction[0];
                         int nextCol = col + direction[1];
 
-                        int index = nextRow * colsCount + nextCol;
-
                         if (!IsPointValid(nextRow, nextCol, rowCount, colsCount))
                             continue;
+
+                        int index = nextRow * colsCount + nextCol;
 
                         if (visited[index])
                             continue;
@@ -145,7 +289,7 @@ class Encoder
 
                         int nextValue = imageRows[nextRow][nextCol];
 
-                        if (nextValue == 255)
+                        if (nextValue > 0)
                         {
 
                             visited[index] = true;
@@ -191,7 +335,7 @@ class Encoder
 
 
 
-    // https://en.wikipedia.org/wiki/Ramer%E2%80%93Douglas%E2%80%93Peucker_algorithm there is pseudo code i copied
+
     private List<List<Vec2i>> DecimateLines(List<List<Vec2i>> lines, float epsilon)
     {
 
@@ -210,7 +354,7 @@ class Encoder
         return finalLines;
 
     }
-
+    // https://en.wikipedia.org/wiki/Ramer%E2%80%93Douglas%E2%80%93Peucker_algorithm there is pseudo code i copied
     private List<Vec2i> DouglasPeucker(List<Vec2i> points, float epsilon)
     {
         float dmax = 0;
@@ -267,8 +411,8 @@ class Encoder
         float bottomSlope = end.Item0 - start.Item0;
         if (topSlope == 0 || bottomSlope == 0)
         {
-            b=1;
-            c=-start.Item1;
+            b = 1;
+            c = -start.Item1;
         }
         else
         {
