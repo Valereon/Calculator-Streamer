@@ -51,7 +51,7 @@ class Encoder
             Mat edges = new Mat();
             // Cv2.GaussianBlur(greyScale, greyScale, new(5, 5), 1.4);
             double otsuThresh = Cv2.Threshold(greyScale, edges, 0, 255, ThresholdTypes.Binary | ThresholdTypes.Otsu);
-            Cv2.Canny(greyScale, edges, otsuThresh, otsuThresh * 2);
+            Cv2.Canny(greyScale, edges, otsuThresh , otsuThresh * 2);
 
 
 
@@ -78,21 +78,22 @@ class Encoder
             }
 
             List<List<Vec2i>> decimatedLines = DecimateLines(lines, 10f);
+            List<List<Vec2i>> averageTwoPoint = decimatedLines.Where(key => key.Count == 2).ToList();
 
             Mat recon = DrawLines(decimatedLines, edges.Cols, edges.Rows);
-            
+
             foreach (List<Vec2i> line in decimatedLines)
             {
                 string message = "";
                 foreach (Vec2i point in line)
                 {
                     string tempMess = $"{(int)point.Item0},{(int)point.Item1};";
-                    if(tempMess == ",;")
+                    if (tempMess == ",;")
                         continue;
                     message += tempMess;
                 }
                 message += "ENDLINE";
-                if(message == "ENDLINE")
+                if (message == "ENDLINE")
                     continue;
                 byte[] data = Encoding.UTF8.GetBytes(message);
                 udpClient.SendTo(data, endPoint);
@@ -100,16 +101,47 @@ class Encoder
             byte[] endmess = Encoding.UTF8.GetBytes("END");
             udpClient.SendTo(endmess, endPoint);
 
+            SerializeImage(decimatedLines);
+
             watch.Stop();
             Cv2.ImShow("wah", recon);
             Cv2.ImWrite("what.png", recon);
             Cv2.WaitKey(1);
-            Console.WriteLine($"Frame Time : {watch.ElapsedMilliseconds} :: Lines {(int)connected.Average(inner => inner.Count)} :: decmiated lines {decimatedLines.Count}");
+            Console.WriteLine($"Frame Time : {watch.ElapsedMilliseconds} :: Lines {(int)connected.Average(inner => inner.Count)} :: decmiated lines {decimatedLines.Count} :: avg 2 line {averageTwoPoint.Count}");
         }
     }
-    private byte[] Serialize(List<List<int>> lines)
+    private List<byte> SerializeImage(List<List<Vec2i>> lines)
     {
-        return [];
+        BitEncoder postionEncoder = new();
+        BitEncoder lengthEncoder = new();
+        
+        for (int i = 0; i < lines.Count; i++)
+        {
+            int len = lines[i].Count;
+            int code = (1 << (len - 1)) - 2;
+            lengthEncoder.Write(code, len-1);
+            for (int j = 0; j < lines[i].Count; j++)
+            {
+                byte x = (byte)lines[i][j].Item0;
+                byte y = (byte)lines[i][j].Item1;
+                postionEncoder.Write(x, 8);
+                postionEncoder.Write(y, 8);
+            }
+        }
+        postionEncoder.Flush();
+        lengthEncoder.Flush();
+        List<byte> lengthEncoded = lengthEncoder.GetData();
+        List<byte> positionEncoded = postionEncoder.GetData();
+
+        short lengthOfCodes = (short)lengthEncoded.Count;
+        List<byte> byteLengthCodes = BitConverter.GetBytes(lengthOfCodes).ToList();
+        lengthEncoded.InsertRange(0, byteLengthCodes);
+        lengthEncoded.AddRange(positionEncoded);
+        // Console.WriteLine(lengthOfCodes);
+        // Console.WriteLine(positionEncoded.Count);
+
+        Console.WriteLine(11.5 * 1024 / (lengthOfCodes + positionEncoded.Count));
+        return lengthEncoded;
     }
 
     private Mat DrawLines(List<List<Vec2i>> lines, int width, int height)
@@ -217,7 +249,7 @@ class Encoder
                             break;
                         }
                     }
-                    if(!isFound)
+                    if (!isFound)
                         break;
                 }
                 listOfregions.Add(group);
