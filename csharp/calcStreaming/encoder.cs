@@ -6,6 +6,7 @@ using System.Net.Sockets;
 using System.Text;
 using System.Net;
 using HPPH;
+using System.Diagnostics.Tracing;
 
 
 class Encoder
@@ -51,7 +52,7 @@ class Encoder
             Mat edges = new Mat();
             // Cv2.GaussianBlur(greyScale, greyScale, new(5, 5), 1.4);
             double otsuThresh = Cv2.Threshold(greyScale, edges, 0, 255, ThresholdTypes.Binary | ThresholdTypes.Otsu);
-            Cv2.Canny(greyScale, edges, otsuThresh , otsuThresh * 2);
+            Cv2.Canny(greyScale, edges, otsuThresh, otsuThresh * 2);
 
 
 
@@ -79,10 +80,10 @@ class Encoder
 
             List<List<Vec2i>> decimatedLines = DecimateLines(lines, 10f);
             List<List<Vec2i>> averageTwoPoint = decimatedLines.Where(key => key.Count == 2).ToList();
+            List<List<Vec2i>> sortedLines = SortLines(decimatedLines, 10);
+            Mat recon = DrawLines(sortedLines, edges.Cols, edges.Rows);
 
-            Mat recon = DrawLines(decimatedLines, edges.Cols, edges.Rows);
-
-            foreach (List<Vec2i> line in decimatedLines)
+            foreach (List<Vec2i> line in sortedLines)
             {
                 string message = "";
                 foreach (Vec2i point in line)
@@ -101,25 +102,30 @@ class Encoder
             byte[] endmess = Encoding.UTF8.GetBytes("END");
             udpClient.SendTo(endmess, endPoint);
 
-            SerializeImage(decimatedLines);
+            SerializeImage(sortedLines);
 
             watch.Stop();
             Cv2.ImShow("wah", recon);
             Cv2.ImWrite("what.png", recon);
             Cv2.WaitKey(1);
-            Console.WriteLine($"Frame Time : {watch.ElapsedMilliseconds} :: Lines {(int)connected.Average(inner => inner.Count)} :: decmiated lines {decimatedLines.Count} :: avg 2 line {averageTwoPoint.Count}");
+            Console.WriteLine($"Frame Time : {watch.ElapsedMilliseconds} :: Lines {(int)connected.Average(inner => inner.Count)} :: decmiated lines {decimatedLines.Count} :: avg 2 line {averageTwoPoint.Count} :: {sortedLines.Count}" );
         }
     }
     private List<byte> SerializeImage(List<List<Vec2i>> lines)
     {
         BitEncoder postionEncoder = new();
         BitEncoder lengthEncoder = new();
-        
+        // sort the lines by count and then rle the counts but also sort them by delta distance in terms of their groups so sort the 2 point lines so the deltas are the smallest between them to improve it
+
+        // ACTUALLY sort the lines by delta maximize the thing is the lenght encoder thing with the codes only takes about 100-200 bytes per frame and is the wrong thing to optimize
+        // if you order them to maximize delta you are optmizing for the thing that has a much bigger cieling to be shrunk so 
+        // order by shortest deltas and then get the length code bitstream before that :)
+
         for (int i = 0; i < lines.Count; i++)
         {
             int len = lines[i].Count;
             int code = (1 << (len - 1)) - 2;
-            lengthEncoder.Write(code, len-1);
+            lengthEncoder.Write(code, len - 1);
             for (int j = 0; j < lines[i].Count; j++)
             {
                 byte x = (byte)lines[i][j].Item0;
@@ -140,8 +146,57 @@ class Encoder
         // Console.WriteLine(lengthOfCodes);
         // Console.WriteLine(positionEncoded.Count);
 
-        Console.WriteLine(11.5 * 1024 / (lengthOfCodes + positionEncoded.Count));
+        Console.WriteLine((11.5 * 1024) / (lengthOfCodes + positionEncoded.Count));
         return lengthEncoded;
+    }
+
+    private List<List<Vec2i>> SortLines(List<List<Vec2i>> lines, int startingChecks)
+    {
+        List<List<Vec2i>> order = new();
+
+
+        bool[] visited = new bool[lines.Count];
+
+        List<Vec2i> current = lines[0];
+        visited[0] = true;
+        order.Add(current);
+
+        while (true)
+        {
+            int bestCost = 999999999;
+            bool foundNext = false;
+            List<Vec2i> bestCandidate = new();
+            int index = 0;
+            for (int i = 0; i < lines.Count; i++)
+            {
+                if(visited[i])
+                    continue;
+                int cost = LineDeltaCost(current, lines[i]);
+                if(cost < bestCost)
+                {
+                    index = i;
+                    bestCost = cost;
+                    bestCandidate = lines[i];   
+                    foundNext = true;
+                }
+            }
+            if(!foundNext)
+                break;
+            order.Add(bestCandidate);
+            current = bestCandidate;
+            visited[index] = true;
+        }
+        return order;
+    }
+    private int LineDeltaCost(List<Vec2i> a, List<Vec2i> b)
+    {
+        Vec2i startA = a[0];
+        Vec2i endA = a.Last();
+
+        Vec2i startB = b[0];
+        Vec2i endB = b.Last();
+        // manhattan distance :)
+        return Math.Abs(startA.Item0 - startB.Item0) + Math.Abs(startA.Item1 - startB.Item1) + Math.Abs(endA.Item0 - endB.Item0) + Math.Abs(endA.Item1 - endB.Item1);
     }
 
     private Mat DrawLines(List<List<Vec2i>> lines, int width, int height)
@@ -374,9 +429,13 @@ class Encoder
         List<List<Vec2i>> finalLines = new();
         for (int i = 0; i < lines.Count; i++)
         {
-            if (lines[i].Count <= 2)
+            if (lines[i].Count == 2)
             {
                 finalLines.Add(lines[i]);
+                continue;
+            }
+            else if(lines[i].Count <= 1)
+            {
                 continue;
             }
 
