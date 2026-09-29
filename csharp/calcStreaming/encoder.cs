@@ -78,7 +78,7 @@ class Encoder
                 lines.Add(points);
             }
 
-            List<List<Vec2i>> decimatedLines = DecimateLines(lines, 10f);
+            List<List<Vec2i>> decimatedLines = DecimateLines(lines, 20f);
             List<List<Vec2i>> averageTwoPoint = decimatedLines.Where(key => key.Count == 2).ToList();
             List<List<Vec2i>> sortedLines = SortLines(decimatedLines, 10);
             Mat recon = DrawLines(sortedLines, edges.Cols, edges.Rows);
@@ -103,12 +103,13 @@ class Encoder
             udpClient.SendTo(endmess, endPoint);
 
             SerializeImage(sortedLines);
+            GetDeltas(sortedLines);
 
             watch.Stop();
             Cv2.ImShow("wah", recon);
             Cv2.ImWrite("what.png", recon);
             Cv2.WaitKey(1);
-            Console.WriteLine($"Frame Time : {watch.ElapsedMilliseconds} :: Lines {(int)connected.Average(inner => inner.Count)} :: decmiated lines {decimatedLines.Count} :: avg 2 line {averageTwoPoint.Count} :: {sortedLines.Count}" );
+            Console.WriteLine($"Frame Time : {watch.ElapsedMilliseconds} :: Lines {(int)connected.Average(inner => inner.Count)} :: decmiated lines {decimatedLines.Count} :: avg 2 line {averageTwoPoint.Count} :: {sortedLines.Count}");
         }
     }
     private List<byte> SerializeImage(List<List<Vec2i>> lines)
@@ -143,11 +144,74 @@ class Encoder
         List<byte> byteLengthCodes = BitConverter.GetBytes(lengthOfCodes).ToList();
         lengthEncoded.InsertRange(0, byteLengthCodes);
         lengthEncoded.AddRange(positionEncoded);
-        // Console.WriteLine(lengthOfCodes);
-        // Console.WriteLine(positionEncoded.Count);
 
         Console.WriteLine((11.5 * 1024) / (lengthOfCodes + positionEncoded.Count));
         return lengthEncoded;
+    }
+
+    //todo fix this and make it more conscise 
+    private List<List<int>> GetDeltas(List<List<Vec2i>> lines)
+    {
+        List<int> x = new();
+        List<int> y = new();
+        List<int> betweenX = new();
+        List<int> betweenY = new();
+
+
+        int lastStartX = -1;
+        int lastStartY = -1;
+        for (int i = 0; i < lines.Count; i++)
+        {
+            List<Vec2i> line = lines[i];
+            Vec2i start = line[0];
+            line.RemoveAt(0);
+            Vec2i end = line.Last();
+            line.RemoveAt(line.Count - 1);
+
+            if (lastStartX == -1)
+            {
+                x.Add(start.Item0);
+                x.Add(start.Item0 - end.Item0);
+                lastStartX = end.Item0;
+
+                y.Add(start.Item1);
+                y.Add(start.Item1 - end.Item1);
+                lastStartY = end.Item1;
+            }
+            else
+            {
+                x.Add(lastStartX - start.Item0);
+                x.Add(start.Item0 - end.Item0);
+                lastStartX = end.Item0;
+
+                y.Add(lastStartY - start.Item1);
+                y.Add(start.Item1 - end.Item1);
+                lastStartY = end.Item1;
+            }
+
+
+            int lastX = -1;
+            int lastY = -1;
+            for (int j = 0; j < line.Count; j++)
+            {
+                if (lastX == -1)
+                {
+                    betweenX.Add(line[0].Item0);
+                    lastX = line[0].Item0;
+                    betweenY.Add(line[0].Item1);
+                    lastY = line[0].Item1;
+                }
+                else
+                {
+                    betweenX.Add(lastX - line[j].Item0);
+                    lastX = line[j].Item0;
+                    betweenY.Add(lastY - line[j].Item1);
+                    lastY = line[j].Item1;
+                }
+            }
+        }
+
+        return new();
     }
 
     private List<List<Vec2i>> SortLines(List<List<Vec2i>> lines, int startingChecks)
@@ -169,18 +233,18 @@ class Encoder
             int index = 0;
             for (int i = 0; i < lines.Count; i++)
             {
-                if(visited[i])
+                if (visited[i])
                     continue;
                 int cost = LineDeltaCost(current, lines[i]);
-                if(cost < bestCost)
+                if (cost < bestCost)
                 {
                     index = i;
                     bestCost = cost;
-                    bestCandidate = lines[i];   
+                    bestCandidate = lines[i];
                     foundNext = true;
                 }
             }
-            if(!foundNext)
+            if (!foundNext)
                 break;
             order.Add(bestCandidate);
             current = bestCandidate;
@@ -313,105 +377,7 @@ class Encoder
         }
         return listOfregions;
     }
-    private List<List<int>> TraceLines(Mat src)
-    {
-        int[][] directions =
-         {
-            [0,1],
-            [0,-1],
-            [1,0],
-            [-1,0],
-            // [1,1],
-            // [1,-1],
-            // [-1,1],
-            // [-1,-1]
-        };
-        int rowCount = src.Rows;
-        int colsCount = src.Cols;
-        bool[] visited = new bool[rowCount * colsCount];
 
-        List<List<int>> listOfregions = new();
-
-        MatRowAccessor<byte> imageRows = src.AsRows<byte>();
-        Queue<int> positions = new();
-        for (int r = 0; r < rowCount; r++)
-        {
-            for (int c = 0; c < colsCount; c++)
-            {
-                int startIndex = r * colsCount + c;
-                if (visited[startIndex] == true)
-                    continue;
-
-                visited[startIndex] = true;
-
-                if (imageRows[r][c] == 0)
-                    continue;
-
-                List<int> group = new();
-                positions.Enqueue(startIndex);
-
-                while (positions.Count > 0)
-                {
-                    int node = positions.Dequeue();
-                    group.Add(node);
-
-
-                    int row = node / colsCount;
-                    int col = node % colsCount;
-
-
-                    foreach (int[] direction in directions)
-                    {
-                        int nextRow = row + direction[0];
-                        int nextCol = col + direction[1];
-
-                        if (!IsPointValid(nextRow, nextCol, rowCount, colsCount))
-                            continue;
-
-                        int index = nextRow * colsCount + nextCol;
-
-                        if (visited[index])
-                            continue;
-
-
-                        int nextValue = imageRows[nextRow][nextCol];
-
-                        if (nextValue > 0)
-                        {
-
-                            visited[index] = true;
-                            positions.Enqueue(index);
-                        }
-                    }
-                }
-                listOfregions.Add(group);
-            }
-        }
-        return listOfregions;
-    }
-    private float QuantizeImageNoRemap(Mat image, int levels)
-    {
-        float factor = 255f / (levels - 1);
-        byte[] lut = new byte[256];
-        for (int l = 0; l < 256; l++)
-        {
-            lut[l] = (byte)(l / factor);
-        }
-
-        MatRowAccessor<byte> col = image.AsRows<byte>();
-        int colLen = col.Count;
-
-        Parallel.For(0, colLen, i =>
-        {
-            Span<byte> row = image.AsRows<byte>()[i]; // re-created per call, not captured
-            for (int j = 0; j < row.Length; j++)
-            {
-                row[j] = lut[row[j]];
-            }
-        });
-
-        return factor;
-    }
     private bool IsPointValid(int row, int col, int rowCount, int colCount)
     {
         return row >= 0 &&
@@ -434,13 +400,17 @@ class Encoder
                 finalLines.Add(lines[i]);
                 continue;
             }
-            else if(lines[i].Count <= 1)
+            else if (lines[i].Count <= 1)
             {
                 continue;
             }
 
             List<Vec2i> decmiatedLine = DouglasPeucker(lines[i], epsilon);
-            finalLines.Add(decmiatedLine);
+            if (decmiatedLine.Count >= 2)
+            {
+                finalLines.Add(decmiatedLine);
+                continue;
+            }
         }
         return finalLines;
 
@@ -513,16 +483,6 @@ class Encoder
         }
         return [a, b, c];
     }
-
-
-    private Mat ResizeImage(Bitmap image, Mat outMat, Vector2 targetRes)
-    {
-        Mat source = BitmapConverter.ToMat(image);
-        OpenCvSharp.Size size = new(targetRes.X, targetRes.Y);
-        Cv2.Resize(source, outMat, size, 0, 0, InterpolationFlags.Area);
-        return outMat;
-    }
-
 
     private Mat ResizeImage(Mat image, Mat outMat, Vector2 targetRes)
     {
