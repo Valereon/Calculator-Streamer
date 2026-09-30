@@ -52,10 +52,28 @@ class Encoder
 
 
             Mat edges = new Mat();
-            // Cv2.GaussianBlur(greyScale, greyScale, new(5, 5), 1.4);
-            double otsuThresh = Cv2.Threshold(greyScale, edges, 0, 255, ThresholdTypes.Binary | ThresholdTypes.Otsu);
-            Cv2.Canny(greyScale, edges, otsuThresh, otsuThresh * 2);
+            Cv2.GaussianBlur(greyScale, greyScale, new(5, 5), 1.4);
 
+            // 12 about 1000 bytes
+            double otsuThresh = Cv2.Threshold(greyScale, edges, 0, 255, ThresholdTypes.Binary | ThresholdTypes.Otsu);
+
+            Scalar mean = Cv2.Mean(greyScale);
+            int lower = (int)Math.Max(0, (1.0 - 0.33) * mean.Val0);
+            int upper = (int)Math.Min(255, (1.0 + 0.33) * mean.Val0);
+            //https://pyimagesearch.com/2015/04/06/zero-parameter-automatic-canny-edge-detection-with-python-and-opencv/
+            // def auto_canny(image, sigma=0.33):
+            // 	# compute the median of the single channel pixel intensities
+            // 	v = np.median(image)
+            // Cv2.
+            // 	# apply automatic Canny edge detection using the computed median
+            // 	lower = int(max(0, (1.0 - sigma) * v))
+            // 	upper = int(min(255, (1.0 + sigma) * v))
+            // 	edged = cv2.Canny(image, lower, upper)
+            // 	# return the edged image
+            // 	return edged
+
+            Cv2.Canny(greyScale, edges, otsuThresh * 0.5f, otsuThresh);
+            // Cv2.Canny(greyScale, edges, lower, upper);
 
 
 
@@ -82,9 +100,13 @@ class Encoder
 
             List<List<Vec2i>> decimatedLines = DecimateLines(lines, 20f);
             List<List<Vec2i>> averageTwoPoint = decimatedLines.Where(key => key.Count == 2).ToList();
-            List<List<Vec2i>> sortedLines = SortLines(decimatedLines, 10);
-            Mat recon = DrawLines(sortedLines, edges.Cols, edges.Rows);
 
+
+            // List<List<Vec2i>> mergedLines = MergeLinesDistance(decimatedLines, 3, 2f);
+            List<List<Vec2i>> sortedLines = SortLines(decimatedLines, 10);
+
+
+            Mat recon = DrawLines(sortedLines, edges.Cols, edges.Rows);
             List<List<int>> deltas = GetDeltas(sortedLines);
 
 
@@ -268,16 +290,6 @@ class Encoder
         }
         return order;
     }
-    
-    private List<List<Vec2i>> MergeLines(List<List<Vec2i>> lines)
-    {
-        
-
-
-
-
-        return new();
-    }
 
     private int LineDeltaCost(List<Vec2i> a, List<Vec2i> b)
     {
@@ -321,14 +333,12 @@ class Encoder
 
         return output;
     }
-    private float Distance(Vec2i start, Vec2i end)
-    {
-        return MathF.Sqrt((float)(MathF.Pow(end.Item0 - start.Item0, 2) + Math.Pow(end.Item1 - start.Item1, 2)));
-    }
     // basically a greedy search that given the 4 connectedness 
     private List<List<int>> CustomLineTrace(Mat src)
     {
-
+        //todo later make it so that it can run in two directions basically right now it just picks and runs but i think
+        // it should be able to do 8 dircetions like north and northwest but not north and east you get it? like so that it can follow a simple
+        //slope
 
         int[][] directions =
          {
@@ -341,6 +351,7 @@ class Encoder
             [-1,1],
             [-1,-1]
         };
+
         int rowCount = src.Rows;
         int colsCount = src.Cols;
         bool[] visited = new bool[rowCount * colsCount];
@@ -374,11 +385,12 @@ class Encoder
                     int col = node % colsCount;
 
                     bool isFound = false;
-                    foreach (int[] direction in directions){
+                    foreach (int[] direction in directions)
+                    {
 
                         int nextRow = 0;
                         int nextCol = 0;
-                        if(trueDirection.Length == 0)
+                        if (trueDirection.Length == 0)
                         {
                             nextRow = row + direction[0];
                             nextCol = col + direction[1];

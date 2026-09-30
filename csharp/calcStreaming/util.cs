@@ -1,3 +1,5 @@
+using OpenCvSharp;
+
 public static class Utilities
 {
     // if copying a full 2560x1440 screen it takes from 30-45ms but going down to 1920x1080 takes only 20-30ms
@@ -5,7 +7,7 @@ public static class Utilities
     {
         Bitmap bmpScreenCapture = new Bitmap(Screen.PrimaryScreen.Bounds.Width, Screen.PrimaryScreen.Bounds.Height);
         Graphics g = Graphics.FromImage(bmpScreenCapture);
-        
+
         g.CopyFromScreen(Screen.PrimaryScreen.Bounds.X,
                             Screen.PrimaryScreen.Bounds.Y,
                             0, 0,
@@ -27,4 +29,11 @@ public static class Utilities
         form.Controls.Add(pictureBox);
         Application.Run(form);
     }
+
+}
+public struct LineSlope
+{
+    public Vec2i start;
+    public Vec2i end;
+    public float slope;
 }
