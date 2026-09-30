@@ -111,14 +111,16 @@ class Encoder
         // if you order them to maximize delta you are optmizing for the thing that has a much bigger cieling to be shrunk so 
         // order by shortest deltas and then get the length code bitstream before that :)
 
+        int len = lines[0].Count;
+        lengthEncoder.Write(len, 16);
         for (int i = 0; i < lines.Count; i++)
         {
+            // int code = (1 << (len - 1)) - 2;
             for (int j = 0; j < lines[i].Count; j++)
             {
                 int num = lines[i][j];
                 uint zagged = ZigZagEncode(num);
 
-                // Shift by +1 because Elias Gamma only supports numbers >= 1
                 uint adjustedVal = zagged + 1;
 
                 int l = (int)Math.Ceiling(Math.Log2(adjustedVal));
@@ -130,6 +132,16 @@ class Encoder
                 postionEncoder.Write(suffixBits, l - 1);
             }
         }
+
+        // for (int i = 0; i < lines.Count; i++)
+        // {
+        //     for (int j = 0; j < lines[i].Count; j++)
+        //     {
+        //         byte num = (byte)betweens[i][j];
+
+        //         postionEncoder.Write(num, 8);
+        //     }
+        // }
         postionEncoder.Flush();
         lengthEncoder.Flush();
         List<byte> lengthEncoded = lengthEncoder.GetData();
@@ -140,8 +152,8 @@ class Encoder
         lengthEncoded.InsertRange(0, byteLengthCodes);
         lengthEncoded.AddRange(positionEncoded);
 
-        Console.WriteLine((11.5 * 1024) / (lengthEncoded.Count + lengthOfCodes + (4 * 16)));
-        Console.WriteLine((lengthEncoded.Count + lengthOfCodes + (4 * 16)));
+        Console.WriteLine((11.5 * 1024) / (lengthEncoded.Count + lengthOfCodes));
+        Console.WriteLine(lengthEncoded.Count + lengthOfCodes);
         return lengthEncoded;
     }
     //https://lemire.me/blog/2022/11/25/making-all-your-integers-positive-with-zigzag-encoding/
@@ -256,6 +268,17 @@ class Encoder
         }
         return order;
     }
+    
+    private List<List<Vec2i>> MergeLines(List<List<Vec2i>> lines)
+    {
+        
+
+
+
+
+        return new();
+    }
+
     private int LineDeltaCost(List<Vec2i> a, List<Vec2i> b)
     {
         Vec2i startA = a[0];
@@ -312,7 +335,11 @@ class Encoder
             [0,1],
             [0,-1],
             [1,0],
-            [-1,0]
+            [-1,0],
+            [1,1],
+            [1,-1],
+            [-1,1],
+            [-1,-1]
         };
         int rowCount = src.Rows;
         int colsCount = src.Cols;
@@ -339,6 +366,7 @@ class Encoder
 
                 int innerR = r;
                 int innerC = c;
+                int[] trueDirection = [];
                 while (true)
                 {
                     int node = innerR * colsCount + innerC;
@@ -346,10 +374,20 @@ class Encoder
                     int col = node % colsCount;
 
                     bool isFound = false;
-                    foreach (int[] direction in directions)
-                    {
-                        int nextRow = row + direction[0];
-                        int nextCol = col + direction[1];
+                    foreach (int[] direction in directions){
+
+                        int nextRow = 0;
+                        int nextCol = 0;
+                        if(trueDirection.Length == 0)
+                        {
+                            nextRow = row + direction[0];
+                            nextCol = col + direction[1];
+                        }
+                        else
+                        {
+                            nextRow = row + trueDirection[0];
+                            nextCol = col + trueDirection[1];
+                        }
 
                         if (!IsPointValid(nextRow, nextCol, rowCount, colsCount))
                             continue;
@@ -367,8 +405,9 @@ class Encoder
                             visited[index] = true;
                             isFound = true;
                             group.Add(index);
-                            innerR += direction[0];
-                            innerC += direction[1];
+                            trueDirection = [direction[0], direction[1]];
+                            innerR += trueDirection[0];
+                            innerC += trueDirection[1];
                             break;
                         }
                     }
