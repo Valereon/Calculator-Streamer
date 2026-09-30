@@ -7,6 +7,8 @@ using System.Text;
 using System.Net;
 using HPPH;
 using System.Diagnostics.Tracing;
+using System.ComponentModel.DataAnnotations;
+using System.Data;
 
 
 class Encoder
@@ -83,27 +85,14 @@ class Encoder
             List<List<Vec2i>> sortedLines = SortLines(decimatedLines, 10);
             Mat recon = DrawLines(sortedLines, edges.Cols, edges.Rows);
 
-            foreach (List<Vec2i> line in sortedLines)
-            {
-                string message = "";
-                foreach (Vec2i point in line)
-                {
-                    string tempMess = $"{(int)point.Item0},{(int)point.Item1};";
-                    if (tempMess == ",;")
-                        continue;
-                    message += tempMess;
-                }
-                message += "ENDLINE";
-                if (message == "ENDLINE")
-                    continue;
-                byte[] data = Encoding.UTF8.GetBytes(message);
-                udpClient.SendTo(data, endPoint);
-            }
-            byte[] endmess = Encoding.UTF8.GetBytes("END");
-            udpClient.SendTo(endmess, endPoint);
+            List<List<int>> deltas = GetDeltas(sortedLines);
 
-            SerializeImage(sortedLines);
-            GetDeltas(sortedLines);
+
+
+            // Console.WriteLine($"{deltas[0].Average()} :: {deltas[1].Average()} :: {deltas[2].Average()} :: {deltas[3].Average()}");
+
+
+            SerializeImage(deltas);
 
             watch.Stop();
             Cv2.ImShow("wah", recon);
@@ -112,7 +101,7 @@ class Encoder
             Console.WriteLine($"Frame Time : {watch.ElapsedMilliseconds} :: Lines {(int)connected.Average(inner => inner.Count)} :: decmiated lines {decimatedLines.Count} :: avg 2 line {averageTwoPoint.Count} :: {sortedLines.Count}");
         }
     }
-    private List<byte> SerializeImage(List<List<Vec2i>> lines)
+    private List<byte> SerializeImage(List<List<int>> lines)
     {
         BitEncoder postionEncoder = new();
         BitEncoder lengthEncoder = new();
@@ -124,15 +113,21 @@ class Encoder
 
         for (int i = 0; i < lines.Count; i++)
         {
-            int len = lines[i].Count;
-            int code = (1 << (len - 1)) - 2;
-            lengthEncoder.Write(code, len - 1);
             for (int j = 0; j < lines[i].Count; j++)
             {
-                byte x = (byte)lines[i][j].Item0;
-                byte y = (byte)lines[i][j].Item1;
-                postionEncoder.Write(x, 8);
-                postionEncoder.Write(y, 8);
+                int num = lines[i][j];
+                uint zagged = ZigZagEncode(num);
+
+                // Shift by +1 because Elias Gamma only supports numbers >= 1
+                uint adjustedVal = zagged + 1;
+
+                int l = (int)Math.Ceiling(Math.Log2(adjustedVal));
+                int unary = 1 << (l - 1);
+
+                int suffixBits = (int)(adjustedVal & ((1 << (l - 1)) - 1));
+
+                postionEncoder.Write(unary, l);
+                postionEncoder.Write(suffixBits, l - 1);
             }
         }
         postionEncoder.Flush();
@@ -145,9 +140,17 @@ class Encoder
         lengthEncoded.InsertRange(0, byteLengthCodes);
         lengthEncoded.AddRange(positionEncoded);
 
-        Console.WriteLine((11.5 * 1024) / (lengthOfCodes + positionEncoded.Count));
+        Console.WriteLine((11.5 * 1024) / (lengthEncoded.Count + lengthOfCodes + (4 * 16)));
+        Console.WriteLine((lengthEncoded.Count + lengthOfCodes + (4 * 16)));
         return lengthEncoded;
     }
+    //https://lemire.me/blog/2022/11/25/making-all-your-integers-positive-with-zigzag-encoding/
+    private uint ZigZagEncode(int value)
+    {
+        return (uint)((value << 1) ^ (value >> 31));
+    }
+    //https://www.geeksforgeeks.org/python/elias-gamma-encoding-in-python/
+
 
     //todo fix this and make it more conscise 
     private List<List<int>> GetDeltas(List<List<Vec2i>> lines)
@@ -211,7 +214,8 @@ class Encoder
             }
         }
 
-        return new();
+
+        return [x, y, betweenX, betweenY];
     }
 
     private List<List<Vec2i>> SortLines(List<List<Vec2i>> lines, int startingChecks)
@@ -385,9 +389,6 @@ class Encoder
                col >= 0 &&
                col < colCount;
     }
-
-
-
 
     private List<List<Vec2i>> DecimateLines(List<List<Vec2i>> lines, float epsilon)
     {

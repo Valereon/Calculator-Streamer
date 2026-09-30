@@ -12,20 +12,23 @@ class BitEncoder
 
     public void Write(int data, int len)
     {
-        buffer = buffer | (data << bitCount);
+
+        int mask = (1 << len) - 1;
+        int maskedData = data & mask;
+
+        buffer = buffer | (maskedData << bitCount);
         bitCount += len;
 
-        while(bitCount > 8)
+        while (bitCount >= 8)
         {
             outputBytes.Add((byte)(buffer & 0xFF));
             buffer = buffer >> 8;
             bitCount -= 8;
         }
     }
-
     public void Flush()
     {
-        if(bitCount > 8)
+        if (bitCount > 8)
         {
             outputBytes.Add((byte)(buffer & 0xFF));
             buffer = 0;
