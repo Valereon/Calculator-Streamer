@@ -17,8 +17,8 @@ class Encoder
         cap.Set(VideoCaptureProperties.FrameWidth, 1920);
         cap.Set(VideoCaptureProperties.FrameHeight, 1080);
 
-        SerialPort port = new SerialPort("COM5", 115200, Parity.None, 8, StopBits.One);
-        port.Open();
+        // SerialPort port = new SerialPort("COM5", 115200, Parity.None, 8, StopBits.One);
+        // port.Open();
 
         while (true)
         {
@@ -86,7 +86,7 @@ class Encoder
             List<byte> encoded = SerializeImage(deltas);
 
 
-            port.Write(encoded.ToArray(), 0, encoded.Count);
+            // port.Write(encoded.ToArray(), 0, encoded.Count);
 
             watch.Stop();
             Cv2.ImShow("wah", recon);
@@ -95,10 +95,7 @@ class Encoder
         }
     }
 
-    private void Send()
-    {
 
-    }
     private List<byte> SerializeImage(List<List<int>> lines)
     {
         BitEncoder postionEncoder = new();
@@ -116,17 +113,17 @@ class Encoder
             for (int j = 0; j < lines[i].Count; j++)
             {
                 int num = lines[i][j];
-                uint zagged = ZigZagEncode(num);
+                uint zagged = ZigZagEncode(num) + 1; // bc of elias needs >=1
 
-                uint adjustedVal = zagged + 1;
 
-                int l = (int)Math.Ceiling(Math.Log2(adjustedVal));
-                int unary = 1 << (l - 1);
 
-                int suffixBits = (int)(adjustedVal & ((1 << (l - 1)) - 1));
 
+                int l = (int)Math.Floor(Math.Log2(zagged));
+                int unary = (1 << l) - 2;
+                
+                int remaningBits = (int)(zagged & ((1 << l)-1));
                 postionEncoder.Write(unary, l);
-                postionEncoder.Write(suffixBits, l - 1);
+                postionEncoder.Write(remaningBits, l);
             }
         }
 
@@ -141,6 +138,9 @@ class Encoder
     {
         return (uint)((value << 1) ^ (value >> 31));
     }
+    // 1010
+    // 10100
+    //
     //https://www.geeksforgeeks.org/python/elias-gamma-encoding-in-python/
 
 
