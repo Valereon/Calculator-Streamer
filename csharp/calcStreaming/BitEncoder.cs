@@ -7,9 +7,6 @@ class BitEncoder
     int bitCount = 0;
     List<byte> outputBytes = new();
 
-
-
-
     public void Write(int data, int len)
     {
 

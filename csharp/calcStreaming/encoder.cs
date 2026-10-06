@@ -1,14 +1,9 @@
 using System.Numerics;
 using OpenCvSharp;
-using OpenCvSharp.GdipExtensions;
 using System.Diagnostics;
-using System.Net.Sockets;
-using System.Text;
-using System.Net;
 using HPPH;
-using System.Diagnostics.Tracing;
-using System.ComponentModel.DataAnnotations;
 using System.Data;
+using System.IO.Ports;
 
 
 class Encoder
@@ -18,15 +13,13 @@ class Encoder
         Stopwatch watch = Stopwatch.StartNew();
         int frames = 0;
 
-        string targetIp = "127.0.0.1";
-        int port = 25566;
-        Socket udpClient = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
-
-        IPEndPoint endPoint = new IPEndPoint(IPAddress.Parse(targetIp), port);
         VideoCapture cap = new VideoCapture(0, VideoCaptureAPIs.DSHOW);
         cap.Set(VideoCaptureProperties.FrameWidth, 1920);
         cap.Set(VideoCaptureProperties.FrameHeight, 1080);
-        // cap.
+
+        SerialPort port = new SerialPort("COM5", 115200, Parity.None, 8, StopBits.One);
+        port.Open();
+
         while (true)
         {
             // if (frames <= frameSkip)
@@ -39,7 +32,6 @@ class Encoder
             //     frames = 0;
 
             watch.Reset();
-
             watch.Start();
 
             Mat screenShot = new();
@@ -53,27 +45,10 @@ class Encoder
 
             Mat edges = new Mat();
             Cv2.GaussianBlur(greyScale, greyScale, new(5, 5), 1.4);
-
-            // 12 about 1000 bytes
             double otsuThresh = Cv2.Threshold(greyScale, edges, 0, 255, ThresholdTypes.Binary | ThresholdTypes.Otsu);
 
-            Scalar mean = Cv2.Mean(greyScale);
-            int lower = (int)Math.Max(0, (1.0 - 0.33) * mean.Val0);
-            int upper = (int)Math.Min(255, (1.0 + 0.33) * mean.Val0);
-            //https://pyimagesearch.com/2015/04/06/zero-parameter-automatic-canny-edge-detection-with-python-and-opencv/
-            // def auto_canny(image, sigma=0.33):
-            // 	# compute the median of the single channel pixel intensities
-            // 	v = np.median(image)
-            // Cv2.
-            // 	# apply automatic Canny edge detection using the computed median
-            // 	lower = int(max(0, (1.0 - sigma) * v))
-            // 	upper = int(min(255, (1.0 + sigma) * v))
-            // 	edged = cv2.Canny(image, lower, upper)
-            // 	# return the edged image
-            // 	return edged
-
             Cv2.Canny(greyScale, edges, otsuThresh * 0.5f, otsuThresh);
-            // Cv2.Canny(greyScale, edges, lower, upper);
+
 
 
 
@@ -93,7 +68,6 @@ class Encoder
                     int actCol = connected[line][point] % colsCount;
                     points.Add(new Vec2i(actCol, actRow));
                 }
-                // points = points.OrderBy(key => key.Item0).ThenBy(key => key.Item1).ToList();
 
                 lines.Add(points);
             }
@@ -101,8 +75,6 @@ class Encoder
             List<List<Vec2i>> decimatedLines = DecimateLines(lines, 20f);
             List<List<Vec2i>> averageTwoPoint = decimatedLines.Where(key => key.Count == 2).ToList();
 
-
-            // List<List<Vec2i>> mergedLines = MergeLinesDistance(decimatedLines, 3, 2f);
             List<List<Vec2i>> sortedLines = SortLines(decimatedLines, 10);
 
 
@@ -111,30 +83,33 @@ class Encoder
 
 
 
-            // Console.WriteLine($"{deltas[0].Average()} :: {deltas[1].Average()} :: {deltas[2].Average()} :: {deltas[3].Average()}");
+            List<byte> encoded = SerializeImage(deltas);
 
 
-            SerializeImage(deltas);
+            port.Write(encoded.ToArray(), 0, encoded.Count);
 
             watch.Stop();
             Cv2.ImShow("wah", recon);
-            Cv2.ImWrite("what.png", recon);
             Cv2.WaitKey(1);
-            Console.WriteLine($"Frame Time : {watch.ElapsedMilliseconds} :: Lines {(int)connected.Average(inner => inner.Count)} :: decmiated lines {decimatedLines.Count} :: avg 2 line {averageTwoPoint.Count} :: {sortedLines.Count}");
+            Console.WriteLine($"Frame Time : {watch.ElapsedMilliseconds} :: FPS {MathF.Round((float)(11.5 * 1024 / encoded.Count), 2)} :: Bytes {encoded.Count}");
         }
+    }
+
+    private void Send()
+    {
+
     }
     private List<byte> SerializeImage(List<List<int>> lines)
     {
         BitEncoder postionEncoder = new();
-        BitEncoder lengthEncoder = new();
         // sort the lines by count and then rle the counts but also sort them by delta distance in terms of their groups so sort the 2 point lines so the deltas are the smallest between them to improve it
 
         // ACTUALLY sort the lines by delta maximize the thing is the lenght encoder thing with the codes only takes about 100-200 bytes per frame and is the wrong thing to optimize
         // if you order them to maximize delta you are optmizing for the thing that has a much bigger cieling to be shrunk so 
         // order by shortest deltas and then get the length code bitstream before that :)
 
-        int len = lines[0].Count;
-        lengthEncoder.Write(len, 16);
+        postionEncoder.Write(lines[0].Count, 16);
+
         for (int i = 0; i < lines.Count; i++)
         {
             // int code = (1 << (len - 1)) - 2;
@@ -155,28 +130,11 @@ class Encoder
             }
         }
 
-        // for (int i = 0; i < lines.Count; i++)
-        // {
-        //     for (int j = 0; j < lines[i].Count; j++)
-        //     {
-        //         byte num = (byte)betweens[i][j];
 
-        //         postionEncoder.Write(num, 8);
-        //     }
-        // }
         postionEncoder.Flush();
-        lengthEncoder.Flush();
-        List<byte> lengthEncoded = lengthEncoder.GetData();
         List<byte> positionEncoded = postionEncoder.GetData();
 
-        short lengthOfCodes = (short)lengthEncoded.Count;
-        List<byte> byteLengthCodes = BitConverter.GetBytes(lengthOfCodes).ToList();
-        lengthEncoded.InsertRange(0, byteLengthCodes);
-        lengthEncoded.AddRange(positionEncoded);
-
-        Console.WriteLine((11.5 * 1024) / (lengthEncoded.Count + lengthOfCodes));
-        Console.WriteLine(lengthEncoded.Count + lengthOfCodes);
-        return lengthEncoded;
+        return positionEncoded;
     }
     //https://lemire.me/blog/2022/11/25/making-all-your-integers-positive-with-zigzag-encoding/
     private uint ZigZagEncode(int value)
@@ -341,7 +299,7 @@ class Encoder
         //slope
 
         int[][] directions =
-         {
+        {
             [0,1],
             [0,-1],
             [1,0],

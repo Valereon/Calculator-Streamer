@@ -3,6 +3,8 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+csharp/calcStreaming/calculatorC/
+
 # C extensions
 *.so
 
