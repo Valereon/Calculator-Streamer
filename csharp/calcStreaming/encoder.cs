@@ -11,7 +11,7 @@ class Encoder
     public void Encode(Vector2 targetRes, int frameSkip, int msToSleepFrameSkip)
     {
         Stopwatch watch = Stopwatch.StartNew();
-        int frames = 0;
+        // int frames = 0;
 
         VideoCapture cap = new VideoCapture(0, VideoCaptureAPIs.DSHOW);
         cap.Set(VideoCaptureProperties.FrameWidth, 1920);
@@ -135,71 +135,28 @@ class Encoder
     {
         return (uint)((value << 1) ^ (value >> 31));
     }
-
-    //todo fix this and make it more conscise 
     private List<List<int>> GetDeltas(List<List<Vec2i>> lines)
     {
         List<int> x = new();
         List<int> y = new();
-        List<int> betweenX = new();
-        List<int> betweenY = new();
 
 
-        int lastStartX = -1;
-        int lastStartY = -1;
-        for (int i = 0; i < lines.Count; i++)
+        int lastStartX = 0;
+        int lastStartY = 0;
+        foreach(List<Vec2i> line in lines)
         {
-            List<Vec2i> line = lines[i];
             Vec2i start = line[0];
-            line.RemoveAt(0);
             Vec2i end = line.Last();
-            line.RemoveAt(line.Count - 1);
+            
+            x.Add(lastStartX - start.Item0);
+            x.Add(start.Item0 - end.Item0);
+            lastStartX = end.Item0;
 
-            if (lastStartX == -1)
-            {
-                x.Add(start.Item0);
-                x.Add(start.Item0 - end.Item0);
-                lastStartX = end.Item0;
-
-                y.Add(start.Item1);
-                y.Add(start.Item1 - end.Item1);
-                lastStartY = end.Item1;
-            }
-            else
-            {
-                x.Add(lastStartX - start.Item0);
-                x.Add(start.Item0 - end.Item0);
-                lastStartX = end.Item0;
-
-                y.Add(lastStartY - start.Item1);
-                y.Add(start.Item1 - end.Item1);
-                lastStartY = end.Item1;
-            }
-
-
-            int lastX = -1;
-            int lastY = -1;
-            for (int j = 0; j < line.Count; j++)
-            {
-                if (lastX == -1)
-                {
-                    betweenX.Add(line[0].Item0);
-                    lastX = line[0].Item0;
-                    betweenY.Add(line[0].Item1);
-                    lastY = line[0].Item1;
-                }
-                else
-                {
-                    betweenX.Add(lastX - line[j].Item0);
-                    lastX = line[j].Item0;
-                    betweenY.Add(lastY - line[j].Item1);
-                    lastY = line[j].Item1;
-                }
-            }
+            y.Add(lastStartY - start.Item1);
+            y.Add(start.Item1 - end.Item1);
+            lastStartY = end.Item1;
         }
-
-
-        return [x, y, betweenX, betweenY];
+        return [x, y];
     }
 
     private List<List<Vec2i>> SortLines(List<List<Vec2i>> lines, int startingChecks)
@@ -402,7 +359,6 @@ class Encoder
         return result;
     }
 
-    // literally dont need this anymore just pick the first and last point
     private Mat ResizeImage(Mat image, Mat outMat, Vector2 targetRes)
     {
         OpenCvSharp.Size size = new(targetRes.X, targetRes.Y);
