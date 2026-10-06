@@ -72,10 +72,9 @@ class Encoder
                 lines.Add(points);
             }
 
-            List<List<Vec2i>> decimatedLines = DecimateLines(lines, 20f);
-            List<List<Vec2i>> averageTwoPoint = decimatedLines.Where(key => key.Count == 2).ToList();
+            List<List<Vec2i>> twoPoint = MakeTwoPointLines(lines);
 
-            List<List<Vec2i>> sortedLines = SortLines(decimatedLines, 10);
+            List<List<Vec2i>> sortedLines = SortLines(twoPoint, 10);
 
 
             Mat recon = DrawLines(sortedLines, edges.Cols, edges.Rows);
@@ -116,8 +115,6 @@ class Encoder
                 uint zagged = ZigZagEncode(num) + 1; // bc of elias needs >=1
 
 
-
-
                 int l = (int)Math.Floor(Math.Log2(zagged));
                 int unary = (1 << l) - 2;
                 
@@ -138,11 +135,6 @@ class Encoder
     {
         return (uint)((value << 1) ^ (value >> 31));
     }
-    // 1010
-    // 10100
-    //
-    //https://www.geeksforgeeks.org/python/elias-gamma-encoding-in-python/
-
 
     //todo fix this and make it more conscise 
     private List<List<int>> GetDeltas(List<List<Vec2i>> lines)
@@ -266,9 +258,6 @@ class Encoder
 
         foreach (List<Vec2i> line in lines)
         {
-            if (line.Count < 2)
-                continue;
-
             OpenCvSharp.Point[] points = new OpenCvSharp.Point[line.Count];
 
             for (int i = 0; i < line.Count; i++)
@@ -398,102 +387,22 @@ class Encoder
                col >= 0 &&
                col < colCount;
     }
-
-    private List<List<Vec2i>> DecimateLines(List<List<Vec2i>> lines, float epsilon)
+    private List<List<Vec2i>> MakeTwoPointLines(List<List<Vec2i>> lines)
     {
+        List<List<Vec2i>> result = new();
 
-        List<List<Vec2i>> finalLines = new();
-        for (int i = 0; i < lines.Count; i++)
+        foreach(List<Vec2i> line in lines)
         {
-            if (lines[i].Count == 2)
+            if(line.Count >= 2)
             {
-                finalLines.Add(lines[i]);
-                continue;
-            }
-            else if (lines[i].Count <= 1)
-            {
-                continue;
-            }
-
-            List<Vec2i> decmiatedLine = DouglasPeucker(lines[i], epsilon);
-            if (decmiatedLine.Count >= 2)
-            {
-                finalLines.Add(decmiatedLine);
-                continue;
-            }
-        }
-        return finalLines;
-
-    }
-    // https://en.wikipedia.org/wiki/Ramer%E2%80%93Douglas%E2%80%93Peucker_algorithm there is pseudo code i copied
-    private List<Vec2i> DouglasPeucker(List<Vec2i> points, float epsilon)
-    {
-        float dmax = 0;
-        int index = 0;
-        int end = points.Count - 1;
-        for (int i = 1; i < end - 1; i++)
-        {
-            float d = PerpendicularDistance(points[i], points[0], points[end]);
-            if (d > dmax)
-            {
-                index = i;
-                dmax = d;
+                result.Add([line[0], line.Last()]);
             }
         }
 
-        List<Vec2i> realPoints = new();
-
-        if (dmax > epsilon)
-        {
-            // recurse
-            List<Vec2i> recResults1 = DouglasPeucker(points.GetRange(1, index), epsilon);
-            List<Vec2i> recResults2 = DouglasPeucker(points.GetRange(index, end - index + 1), epsilon);
-
-            realPoints = recResults1.GetRange(0, recResults1.Count - 1);
-            realPoints.AddRange(recResults2);
-
-        }
-        else
-        {
-            realPoints.Add(points[0]);
-            realPoints.Add(points[end]);
-        }
-        return realPoints;
-
+        return result;
     }
 
-    private float PerpendicularDistance(Vec2i point, Vec2i start, Vec2i end)
-    {
-        float[] line = GetGeneralForm(start, end);
-        float a = line[0];
-        float b = line[1];
-        float c = line[2];
-        float distance = MathF.Abs(a * point.Item0 + b * point.Item1 + c) / MathF.Sqrt(MathF.Pow(a, 2) + MathF.Pow(b, 2));
-        return distance;
-    }
-
-    private float[] GetGeneralForm(Vec2i start, Vec2i end)
-    {
-        float a = 0;
-        float b = 0;
-        float c = 0;
-
-        float topSlope = end.Item1 - start.Item1;
-        float bottomSlope = end.Item0 - start.Item0;
-        if (topSlope == 0 || bottomSlope == 0)
-        {
-            b = 1;
-            c = -start.Item1;
-        }
-        else
-        {
-            a = topSlope / bottomSlope;
-            b = start.Item0 - end.Item0;
-            c = -a * start.Item0 + start.Item1;
-        }
-        return [a, b, c];
-    }
-
+    // literally dont need this anymore just pick the first and last point
     private Mat ResizeImage(Mat image, Mat outMat, Vector2 targetRes)
     {
         OpenCvSharp.Size size = new(targetRes.X, targetRes.Y);
