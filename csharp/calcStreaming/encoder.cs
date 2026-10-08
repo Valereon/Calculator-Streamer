@@ -37,51 +37,20 @@ class Encoder
             Mat screenShot = new();
             cap.Read(screenShot);
 
-
-            Mat greyScale = new();
-            ResizeImage(screenShot, greyScale, targetRes);
-            Cv2.CvtColor(greyScale, greyScale, ColorConversionCodes.BGRA2GRAY);
-
-
-            Mat edges = new Mat();
-            Cv2.GaussianBlur(greyScale, greyScale, new(5, 5), 1.4);
-            double otsuThresh = Cv2.Threshold(greyScale, edges, 0, 255, ThresholdTypes.Binary | ThresholdTypes.Otsu);
-
-            Cv2.Canny(greyScale, edges, otsuThresh * 0.5f, otsuThresh);
-
-
-
-
-
-
+            Mat edges = PrepImage(screenShot, targetRes);
 
             List<List<int>> connected = CustomLineTrace(edges);
 
-            int colsCount = edges.Cols;
-            List<List<Vec2i>> lines = new();
-            for (int line = 0; line < connected.Count; line++)
-            {
-                List<Vec2i> points = new();
-                for (int point = 0; point < connected[line].Count; point++)
-                {
-                    int actRow = connected[line][point] / colsCount;
-                    int actCol = connected[line][point] % colsCount;
-                    points.Add(new Vec2i(actCol, actRow));
-                }
+            List<List<Vec2i>> properLines = To2D(connected, edges.Cols);
 
-                lines.Add(points);
-            }
-
-            List<List<Vec2i>> twoPoint = MakeTwoPointLines(lines);
+            List<List<Vec2i>> twoPoint = MakeTwoPointLines(properLines);
 
             List<List<Vec2i>> sortedLines = SortLines(twoPoint, 10);
 
 
             Mat recon = DrawLines(sortedLines, edges.Cols, edges.Rows);
+
             List<List<int>> deltas = GetDeltas(sortedLines);
-
-
-
             List<byte> encoded = SerializeImage(deltas);
 
 
@@ -117,8 +86,8 @@ class Encoder
 
                 int l = (int)Math.Floor(Math.Log2(zagged));
                 int unary = (1 << l) - 2;
-                
-                int remaningBits = (int)(zagged & ((1 << l)-1));
+
+                int remaningBits = (int)(zagged & ((1 << l) - 1));
                 postionEncoder.Write(unary, l);
                 postionEncoder.Write(remaningBits, l);
             }
@@ -143,11 +112,11 @@ class Encoder
 
         int lastStartX = 0;
         int lastStartY = 0;
-        foreach(List<Vec2i> line in lines)
+        foreach (List<Vec2i> line in lines)
         {
             Vec2i start = line[0];
             Vec2i end = line.Last();
-            
+
             x.Add(lastStartX - start.Item0);
             x.Add(start.Item0 - end.Item0);
             lastStartX = end.Item0;
@@ -209,6 +178,39 @@ class Encoder
         return Math.Abs(startA.Item0 - startB.Item0) + Math.Abs(startA.Item1 - startB.Item1) + Math.Abs(endA.Item0 - endB.Item0) + Math.Abs(endA.Item1 - endB.Item1);
     }
 
+    private List<List<Vec2i>> To2D(List<List<int>> ints, int colsCount)
+
+    {
+        List<List<Vec2i>> lines = new();
+        for (int line = 0; line < ints.Count; line++)
+        {
+            List<Vec2i> points = new();
+            for (int point = 0; point < ints[line].Count; point++)
+            {
+                int actRow = ints[line][point] / colsCount;
+                int actCol = ints[line][point] % colsCount;
+                points.Add(new Vec2i(actCol, actRow));
+            }
+
+            lines.Add(points);
+        }
+        return lines;
+    }
+
+    private Mat PrepImage(Mat screenShot, Vector2 targetRes)
+    {
+        Mat greyScale = new();
+        ResizeImage(screenShot, greyScale, targetRes);
+        Cv2.CvtColor(greyScale, greyScale, ColorConversionCodes.BGRA2GRAY);
+
+
+        Mat edges = new Mat();
+        Cv2.GaussianBlur(greyScale, greyScale, new(5, 5), 1.4);
+        double otsuThresh = Cv2.Threshold(greyScale, edges, 0, 255, ThresholdTypes.Binary | ThresholdTypes.Otsu);
+
+        Cv2.Canny(greyScale, edges, otsuThresh * 0.5f, otsuThresh);
+        return edges;
+    }
     private Mat DrawLines(List<List<Vec2i>> lines, int width, int height)
     {
         Mat output = Mat.Zeros(height, width, MatType.CV_8UC1);
@@ -348,9 +350,9 @@ class Encoder
     {
         List<List<Vec2i>> result = new();
 
-        foreach(List<Vec2i> line in lines)
+        foreach (List<Vec2i> line in lines)
         {
-            if(line.Count >= 2)
+            if (line.Count >= 2)
             {
                 result.Add([line[0], line.Last()]);
             }
