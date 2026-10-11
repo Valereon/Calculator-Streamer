@@ -5,6 +5,8 @@ using HPPH;
 using System.Data;
 using System.IO.Ports;
 using Microsoft.VisualBasic.ApplicationServices;
+using Microsoft.VisualBasic;
+using System.Windows.Input;
 
 
 class Encoder
@@ -40,23 +42,50 @@ class Encoder
 
             Mat edges = PrepImage(screenShot, targetRes);
 
-            List<List<int>> connected = CustomLineTrace(edges);
+            List<List<Vec2i>> connected = CustomLineTrace(edges);
 
-            List<List<Vec2i>> properLines = To2D(connected, edges.Cols);
+            // List<List<Vec2i>> properLines = To2D(connected, edges.Cols);
 
-            List<List<Vec2i>> twoPoint = MakeTwoPointLines(properLines);
+            List<List<Vec2i>> twoPoint = MakeTwoPointLines(connected);
 
             List<List<Vec2i>> sortedLines = SortLines(twoPoint, 10);
+
+            int predicitedDx = 0;
+            int predicitedDy = 0;
+            List<int> predictionsX = new(); 
+            List<int> predictionsY = new(); 
+            Vec2i endLastLine = new(0,0);
+            foreach(List<Vec2i> line in sortedLines)
+            {
+                int predictedX = endLastLine.Item0 + predicitedDx;
+                int predictedY = endLastLine.Item1 + predicitedDy;
+
+                int errorX = line[0].Item0 - predictedX;
+                int errorY = line[0].Item1 - predictedY;
+
+                predictionsX.Add(errorX);
+                predictionsY.Add(errorY);
+
+                int actualDx = line[1].Item0 - line[0].Item0;
+                int actualDy = line[1].Item1 - line[0].Item1;
+
+                predicitedDx = actualDx;
+                predicitedDy = actualDy;
+                endLastLine = line[1];
+            }
 
 
             Mat recon = DrawLines(sortedLines, edges.Cols, edges.Rows);
 
-            List<List<int>> deltas = GetDeltas(sortedLines);
-            List<byte> encoded = SerializeImage(deltas);
+            // List<List<int>> deltas = GetDeltas(sortedLines);
+            List<List<int>> residuals = [predictionsX, predictionsY];
+            List<byte> encoded = SerializeImage(residuals);
 
 
-            // port.Write(encoded.ToArray(), 0, encoded.Count);
-
+            // lowkey gemeini
+            // int[] histogram = Enumerable.Range(0, 256).Select(i => encoded.Count(b => b == (byte)i)).OrderByDescending(key => key).ToArray();
+            // var histogram2 = deltas[0].GroupBy(x => x).ToDictionary(g => g.Key, g => g.Count()).OrderByDescending(key => key.Value);
+            // var histogram3 = deltas[1].GroupBy(x => x).ToDictionary(g => g.Key, g => g.Count()).OrderByDescending(key => key.Value);
             watch.Stop();
             Cv2.ImShow("wah", recon);
             Cv2.WaitKey(1);
@@ -76,6 +105,7 @@ class Encoder
 
         postionEncoder.Write(lines[0].Count, 16);
 
+        Dictionary<int, int> keyValuePairs = new();
         for (int i = 0; i < lines.Count; i++)
         {
             // int code = (1 << (len - 1)) - 2;
@@ -86,10 +116,10 @@ class Encoder
 
 
                 int l = (int)Math.Floor(Math.Log2(zagged));
-                int unary = (1 << l) - 2;
-
                 int remaningBits = (int)(zagged & ((1 << l) - 1));
-                postionEncoder.Write(unary, l);
+
+                postionEncoder.Write(0, l);
+                postionEncoder.Write(1, 1);
                 postionEncoder.Write(remaningBits, l);
             }
         }
@@ -97,10 +127,11 @@ class Encoder
 
         postionEncoder.Flush();
         List<byte> positionEncoded = postionEncoder.GetData();
-
         return positionEncoded;
     }
     //https://lemire.me/blog/2022/11/25/making-all-your-integers-positive-with-zigzag-encoding/
+
+
     private uint ZigZagEncode(int value)
     {
         return (uint)((value << 1) ^ (value >> 31));
@@ -243,11 +274,12 @@ class Encoder
         return output;
     }
     // basically a greedy search that given the 4 connectedness 
-    private List<List<int>> CustomLineTrace(Mat src)
+    private List<List<Vec2i>> CustomLineTrace(Mat src)
     {
         //todo later make it so that it can run in two directions basically right now it just picks and runs but i think
         // it should be able to do 8 dircetions like north and northwest but not north and east you get it? like so that it can follow a simple
         //slope
+        int blackLength = 4;
 
         int[][] directions =
         {
@@ -255,17 +287,13 @@ class Encoder
             [0,-1],
             [1,0],
             [-1,0],
-            [1,1],
-            [1,-1],
-            [-1,1],
-            [-1,-1]
         };
 
         int rowCount = src.Rows;
         int colsCount = src.Cols;
-        bool[] visited = new bool[rowCount * colsCount];
+        bool[,] visited = new bool[rowCount, colsCount];
 
-        List<List<int>> listOfregions = new();
+        List<List<Vec2i>> listOfregions = new();
 
         MatRowAccessor<byte> imageRows = src.AsRows<byte>();
 
@@ -273,71 +301,81 @@ class Encoder
         {
             for (int c = 0; c < colsCount; c++)
             {
-                int startIndex = r * colsCount + c;
-                if (visited[startIndex] == true)
+                if (visited[r, c])
                     continue;
 
-                visited[startIndex] = true;
+                visited[r, c] = true;
 
                 if (imageRows[r][c] == 0)
                     continue;
 
-                List<int> group = new();
+                List<Vec2i> group = new();
 
                 int innerR = r;
                 int innerC = c;
                 int[] trueDirection = [];
+                int totalBlack = 0;
                 while (true)
                 {
                     int node = innerR * colsCount + innerC;
                     int row = node / colsCount;
                     int col = node % colsCount;
 
-                    bool isFound = false;
-                    foreach (int[] direction in directions)
+                    if (trueDirection.Length == 0)
                     {
+                        foreach (int[] direction in directions)
+                        {
+                            int innerNextRow = row + direction[0];
+                            int innerNextCol = col + direction[1];
 
-                        int nextRow = 0;
-                        int nextCol = 0;
+                            if (!IsPointValid(innerNextRow, innerNextCol, rowCount, colsCount))
+                                continue;
+
+                            int innerNextValue = imageRows[innerNextRow][innerNextCol];
+
+                            if (innerNextValue > 0)
+                            {
+                                trueDirection = [direction[0], direction[1]];
+                                break;
+                            }
+                        }
                         if (trueDirection.Length == 0)
-                        {
-                            nextRow = row + direction[0];
-                            nextCol = col + direction[1];
-                        }
-                        else
-                        {
-                            nextRow = row + trueDirection[0];
-                            nextCol = col + trueDirection[1];
-                        }
-
-                        if (!IsPointValid(nextRow, nextCol, rowCount, colsCount))
-                            continue;
-
-                        int index = nextRow * colsCount + nextCol;
-
-                        if (visited[index])
-                            continue;
-
-
-                        int nextValue = imageRows[nextRow][nextCol];
-
-                        if (nextValue > 0)
-                        {
-                            visited[index] = true;
-                            isFound = true;
-                            group.Add(index);
-                            trueDirection = [direction[0], direction[1]];
-                            innerR += trueDirection[0];
-                            innerC += trueDirection[1];
                             break;
-                        }
-                    }
-                    if (!isFound)
-                        break;
-                }
-                listOfregions.Add(group);
 
+                    }
+
+
+
+                    int nextRow = row + trueDirection[0];
+                    int nextCol = col + trueDirection[1];
+
+                    if (!IsPointValid(nextRow, nextCol, rowCount, colsCount))
+                        break;
+
+                    if (visited[nextRow, nextCol])
+                        break;
+
+                    int nextValue = imageRows[nextRow][nextCol];
+
+                    if (nextValue == 0)
+                    {
+                        totalBlack += 1;
+                        if (totalBlack >= blackLength)
+                            break;
+                        continue;
+                    }
+
+                    visited[nextRow, nextCol] = true;
+                    innerR += trueDirection[0];
+                    innerC += trueDirection[1];
+                    group.Add(new Vec2i(nextCol,nextRow));
+                }
+                if (group.Count >= 2)
+                {
+                    listOfregions.Add(group);
+                }
             }
+
         }
         return listOfregions;
     }
