@@ -7,6 +7,8 @@ using System.IO.Ports;
 using Microsoft.VisualBasic.ApplicationServices;
 using Microsoft.VisualBasic;
 using System.Windows.Input;
+using OpenCvSharp.Rgbd;
+using OpenCvSharp.WpfExtensions;
 
 
 class Encoder
@@ -44,42 +46,41 @@ class Encoder
 
             List<List<Vec2i>> connected = CustomLineTrace(edges);
 
-            // List<List<Vec2i>> properLines = To2D(connected, edges.Cols);
-
             List<List<Vec2i>> twoPoint = MakeTwoPointLines(connected);
+
+
+            for (int i = 0; i < twoPoint.Count; i++)
+            {
+                for (int j = 0; j < twoPoint[i].Count; j++)
+                {
+                    Vec2i point = twoPoint[i][j];
+                    point.Item0 >>= 1;
+                    point.Item1 >>= 1;
+                    twoPoint[i][j] = point;
+                }
+            }
 
             List<List<Vec2i>> sortedLines = SortLines(twoPoint, 10);
 
-            int predicitedDx = 0;
-            int predicitedDy = 0;
-            List<int> predictionsX = new(); 
-            List<int> predictionsY = new(); 
-            Vec2i endLastLine = new(0,0);
-            foreach(List<Vec2i> line in sortedLines)
+            List<List<int>> residuals = LinearPredictor(sortedLines);
+            List<byte> encoded = SerializeImage(residuals);
+
+
+
+            for (int i = 0; i < sortedLines.Count; i++)
             {
-                int predictedX = endLastLine.Item0 + predicitedDx;
-                int predictedY = endLastLine.Item1 + predicitedDy;
-
-                int errorX = line[0].Item0 - predictedX;
-                int errorY = line[0].Item1 - predictedY;
-
-                predictionsX.Add(errorX);
-                predictionsY.Add(errorY);
-
-                int actualDx = line[1].Item0 - line[0].Item0;
-                int actualDy = line[1].Item1 - line[0].Item1;
-
-                predicitedDx = actualDx;
-                predicitedDy = actualDy;
-                endLastLine = line[1];
+                for (int j = 0; j < sortedLines[i].Count; j++)
+                {
+                    Vec2i point = sortedLines[i][j];
+                    point.Item0 <<= 1;
+                    point.Item1 <<= 1;
+                    sortedLines[i][j] = point;
+                }
             }
 
-
-            Mat recon = DrawLines(sortedLines, edges.Cols, edges.Rows);
+            Mat recon = DrawLines(sortedLines, 320, 240);
 
             // List<List<int>> deltas = GetDeltas(sortedLines);
-            List<List<int>> residuals = [predictionsX, predictionsY];
-            List<byte> encoded = SerializeImage(residuals);
 
 
             // lowkey gemeini
@@ -87,6 +88,7 @@ class Encoder
             // var histogram2 = deltas[0].GroupBy(x => x).ToDictionary(g => g.Key, g => g.Count()).OrderByDescending(key => key.Value);
             // var histogram3 = deltas[1].GroupBy(x => x).ToDictionary(g => g.Key, g => g.Count()).OrderByDescending(key => key.Value);
             watch.Stop();
+
             Cv2.ImShow("wah", recon);
             Cv2.WaitKey(1);
             Console.WriteLine($"Frame Time : {watch.ElapsedMilliseconds} :: FPS {MathF.Round((float)(11.5 * 1024 / encoded.Count), 2)} :: Bytes {encoded.Count}");
@@ -129,38 +131,42 @@ class Encoder
         List<byte> positionEncoded = postionEncoder.GetData();
         return positionEncoded;
     }
-    //https://lemire.me/blog/2022/11/25/making-all-your-integers-positive-with-zigzag-encoding/
-
 
     private uint ZigZagEncode(int value)
     {
+        //https://lemire.me/blog/2022/11/25/making-all-your-integers-positive-with-zigzag-encoding/
         return (uint)((value << 1) ^ (value >> 31));
     }
-    private List<List<int>> GetDeltas(List<List<Vec2i>> lines)
+
+    private List<List<int>> LinearPredictor(List<List<Vec2i>> lines)
     {
-        List<int> x = new();
-        List<int> y = new();
-
-
-        int lastStartX = 0;
-        int lastStartY = 0;
+        int predicitedDx = 0;
+        int predicitedDy = 0;
+        List<int> predictionsX = new();
+        List<int> predictionsY = new();
+        Vec2i endLastLine = new(0, 0);
         foreach (List<Vec2i> line in lines)
         {
-            Vec2i start = line[0];
-            Vec2i end = line.Last();
 
-            x.Add(start.Item0 - lastStartX);
-            lastStartX = end.Item0;
+            int predictedX = endLastLine.Item0 + predicitedDx;
+            int predictedY = endLastLine.Item1 + predicitedDy;
 
-            y.Add(start.Item1 - lastStartY);
-            lastStartY = end.Item1;
+            int errorX = line[0].Item0 - predictedX;
+            int errorY = line[0].Item1 - predictedY;
 
+            predictionsX.Add(errorX);
+            predictionsY.Add(errorY);
 
-            x.Add(end.Item0 - start.Item0);
-            y.Add(end.Item1 - start.Item1);
+            int actualDx = line[1].Item0 - line[0].Item0;
+            int actualDy = line[1].Item1 - line[0].Item1;
+
+            predicitedDx = actualDx;
+            predicitedDy = actualDy;
+            endLastLine = line[1];
         }
-        return [x, y];
+        return [predictionsX, predictionsY];
     }
+
 
     private List<List<Vec2i>> SortLines(List<List<Vec2i>> lines, int startingChecks)
     {
@@ -212,29 +218,12 @@ class Encoder
         return Math.Abs(endA.Item0 - startB.Item0) + Math.Abs(endA.Item1 - startB.Item1);
     }
 
-    private List<List<Vec2i>> To2D(List<List<int>> ints, int colsCount)
-
-    {
-        List<List<Vec2i>> lines = new();
-        for (int line = 0; line < ints.Count; line++)
-        {
-            List<Vec2i> points = new();
-            for (int point = 0; point < ints[line].Count; point++)
-            {
-                int actRow = ints[line][point] / colsCount;
-                int actCol = ints[line][point] % colsCount;
-                points.Add(new Vec2i(actCol, actRow));
-            }
-
-            lines.Add(points);
-        }
-        return lines;
-    }
-
     private Mat PrepImage(Mat screenShot, Vector2 targetRes)
     {
         Mat greyScale = new();
-        ResizeImage(screenShot, greyScale, targetRes);
+        ResizeImage(screenShot, greyScale, new Vector2(640, 480));
+        // ResizeImage(screenShot, greyScale, new Vector2(320, 240));
+        ResizeImage(greyScale, greyScale, targetRes);
         Cv2.CvtColor(greyScale, greyScale, ColorConversionCodes.BGRA2GRAY);
 
 
@@ -273,7 +262,7 @@ class Encoder
 
         return output;
     }
-    // basically a greedy search that given the 4 connectedness 
+
     private List<List<Vec2i>> CustomLineTrace(Mat src)
     {
         //todo later make it so that it can run in two directions basically right now it just picks and runs but i think
@@ -368,7 +357,7 @@ class Encoder
                     visited[nextRow, nextCol] = true;
                     innerR += trueDirection[0];
                     innerC += trueDirection[1];
-                    group.Add(new Vec2i(nextCol,nextRow));
+                    group.Add(new Vec2i(nextCol, nextRow));
                 }
                 if (group.Count >= 2)
                 {
