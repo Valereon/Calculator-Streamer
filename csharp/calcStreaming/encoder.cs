@@ -4,6 +4,7 @@ using System.Diagnostics;
 using HPPH;
 using System.Data;
 using System.IO.Ports;
+using Microsoft.VisualBasic.ApplicationServices;
 
 
 class Encoder
@@ -117,13 +118,15 @@ class Encoder
             Vec2i start = line[0];
             Vec2i end = line.Last();
 
-            x.Add(lastStartX - start.Item0);
-            x.Add(start.Item0 - end.Item0);
+            x.Add(start.Item0 - lastStartX);
             lastStartX = end.Item0;
 
-            y.Add(lastStartY - start.Item1);
-            y.Add(start.Item1 - end.Item1);
+            y.Add(start.Item1 - lastStartY);
             lastStartY = end.Item1;
+
+
+            x.Add(end.Item0 - start.Item0);
+            y.Add(end.Item1 - start.Item1);
         }
         return [x, y];
     }
@@ -175,7 +178,7 @@ class Encoder
         Vec2i startB = b[0];
         Vec2i endB = b.Last();
         // manhattan distance :)
-        return Math.Abs(startA.Item0 - startB.Item0) + Math.Abs(startA.Item1 - startB.Item1) + Math.Abs(endA.Item0 - endB.Item0) + Math.Abs(endA.Item1 - endB.Item1);
+        return Math.Abs(endA.Item0 - startB.Item0) + Math.Abs(endA.Item1 - startB.Item1);
     }
 
     private List<List<Vec2i>> To2D(List<List<int>> ints, int colsCount)
