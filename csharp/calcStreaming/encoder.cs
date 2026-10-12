@@ -1,19 +1,12 @@
 using System.Numerics;
 using OpenCvSharp;
 using System.Diagnostics;
-using HPPH;
-using System.Data;
 using System.IO.Ports;
-using Microsoft.VisualBasic.ApplicationServices;
-using Microsoft.VisualBasic;
-using System.Windows.Input;
-using OpenCvSharp.Rgbd;
-using OpenCvSharp.WpfExtensions;
 
 
 class Encoder
 {
-    public void Encode(Vector2 targetRes, int frameSkip, int msToSleepFrameSkip)
+    public void Encode(Vector2 targetRes)
     {
         Stopwatch watch = Stopwatch.StartNew();
         // int frames = 0;
@@ -22,19 +15,16 @@ class Encoder
         cap.Set(VideoCaptureProperties.FrameWidth, 1920);
         cap.Set(VideoCaptureProperties.FrameHeight, 1080);
 
-        // SerialPort port = new SerialPort("COM5", 115200, Parity.None, 8, StopBits.One);
-        // port.Open();
+        SerialPort port = new SerialPort("COM5", 115200, Parity.None, 8, StopBits.One);
+        // port.Handshake = Handshake.None;
+        // port.DtrEnable = true;
+        // port.RtsEnable = true;
+        // port.ReadTimeout = 500;
+        // port.WriteTimeout = 500;
+        port.Open();
 
         while (true)
         {
-            // if (frames <= frameSkip)
-            // {
-            //     Thread.Sleep(msToSleepFrameSkip);
-            //     frames += 1;
-            //     continue;
-            // }
-            // else
-            //     frames = 0;
 
             watch.Reset();
             watch.Start();
@@ -49,22 +39,14 @@ class Encoder
             List<List<Vec2i>> twoPoint = MakeTwoPointLines(connected);
 
 
-            for (int i = 0; i < twoPoint.Count; i++)
-            {
-                for (int j = 0; j < twoPoint[i].Count; j++)
-                {
-                    Vec2i point = twoPoint[i][j];
-                    point.Item0 >>= 1;
-                    point.Item1 >>= 1;
-                    twoPoint[i][j] = point;
-                }
-            }
+            // 1 is half resolution and 2 is quarter (based on >> shift so powers of 2)
 
+            ScaleRenderResolution(twoPoint, 1);
             List<List<Vec2i>> sortedLines = SortLines(twoPoint, 10);
 
             List<List<int>> residuals = LinearPredictor(sortedLines);
             List<byte> encoded = SerializeImage(residuals);
-
+            encoded.Insert(0, 255);
 
 
             for (int i = 0; i < sortedLines.Count; i++)
@@ -79,14 +61,7 @@ class Encoder
             }
 
             Mat recon = DrawLines(sortedLines, 320, 240);
-
-            // List<List<int>> deltas = GetDeltas(sortedLines);
-
-
-            // lowkey gemeini
-            // int[] histogram = Enumerable.Range(0, 256).Select(i => encoded.Count(b => b == (byte)i)).OrderByDescending(key => key).ToArray();
-            // var histogram2 = deltas[0].GroupBy(x => x).ToDictionary(g => g.Key, g => g.Count()).OrderByDescending(key => key.Value);
-            // var histogram3 = deltas[1].GroupBy(x => x).ToDictionary(g => g.Key, g => g.Count()).OrderByDescending(key => key.Value);
+            port.Write(encoded.ToArray(), 0, encoded.Count);
             watch.Stop();
 
             Cv2.ImShow("wah", recon);
@@ -98,14 +73,11 @@ class Encoder
 
     private List<byte> SerializeImage(List<List<int>> lines)
     {
-        BitEncoder postionEncoder = new();
-        // sort the lines by count and then rle the counts but also sort them by delta distance in terms of their groups so sort the 2 point lines so the deltas are the smallest between them to improve it
-
-        // ACTUALLY sort the lines by delta maximize the thing is the lenght encoder thing with the codes only takes about 100-200 bytes per frame and is the wrong thing to optimize
-        // if you order them to maximize delta you are optmizing for the thing that has a much bigger cieling to be shrunk so 
-        // order by shortest deltas and then get the length code bitstream before that :)
-
-        postionEncoder.Write(lines[0].Count, 16);
+        BitEncoder positionEncoder = new();
+        byte first = (byte)(lines[0].Count & 0xFF);
+        byte last = (byte)(lines[0].Count >> 8);
+        positionEncoder.Write(first, 8);
+        positionEncoder.Write(last, 8);
 
         Dictionary<int, int> keyValuePairs = new();
         for (int i = 0; i < lines.Count; i++)
@@ -118,55 +90,36 @@ class Encoder
 
 
                 int l = (int)Math.Floor(Math.Log2(zagged));
-                int remaningBits = (int)(zagged & ((1 << l) - 1));
+                int remainingBits = (int)(zagged & ((1 << l) - 1));
 
-                postionEncoder.Write(0, l);
-                postionEncoder.Write(1, 1);
-                postionEncoder.Write(remaningBits, l);
+                positionEncoder.Write(0, l);
+                positionEncoder.Write(1, 1);
+                positionEncoder.Write(remainingBits, l);
+
             }
         }
 
 
-        postionEncoder.Flush();
-        List<byte> positionEncoded = postionEncoder.GetData();
+        positionEncoder.Flush();
+        List<byte> positionEncoded = positionEncoder.GetData();
+        positionEncoded.Insert(0, (byte)(positionEncoded.Count & 0xFF)); // last byte 
+        positionEncoded.Insert(1, (byte)(positionEncoded.Count >> 8)); // first byte of 16 btis
         return positionEncoded;
     }
 
-    private uint ZigZagEncode(int value)
+    private void ScaleRenderResolution(List<List<Vec2i>> points, int factor)
     {
-        //https://lemire.me/blog/2022/11/25/making-all-your-integers-positive-with-zigzag-encoding/
-        return (uint)((value << 1) ^ (value >> 31));
-    }
-
-    private List<List<int>> LinearPredictor(List<List<Vec2i>> lines)
-    {
-        int predicitedDx = 0;
-        int predicitedDy = 0;
-        List<int> predictionsX = new();
-        List<int> predictionsY = new();
-        Vec2i endLastLine = new(0, 0);
-        foreach (List<Vec2i> line in lines)
+        for (int i = 0; i < points.Count; i++)
         {
-
-            int predictedX = endLastLine.Item0 + predicitedDx;
-            int predictedY = endLastLine.Item1 + predicitedDy;
-
-            int errorX = line[0].Item0 - predictedX;
-            int errorY = line[0].Item1 - predictedY;
-
-            predictionsX.Add(errorX);
-            predictionsY.Add(errorY);
-
-            int actualDx = line[1].Item0 - line[0].Item0;
-            int actualDy = line[1].Item1 - line[0].Item1;
-
-            predicitedDx = actualDx;
-            predicitedDy = actualDy;
-            endLastLine = line[1];
+            for (int j = 0; j < points[i].Count; j++)
+            {
+                Vec2i point = points[i][j];
+                point.Item0 >>= factor;
+                point.Item1 >>= factor;
+                points[i][j] = point;
+            }
         }
-        return [predictionsX, predictionsY];
     }
-
 
     private List<List<Vec2i>> SortLines(List<List<Vec2i>> lines, int startingChecks)
     {
@@ -205,62 +158,6 @@ class Encoder
             visited[index] = true;
         }
         return order;
-    }
-
-    private int LineDeltaCost(List<Vec2i> a, List<Vec2i> b)
-    {
-        Vec2i startA = a[0];
-        Vec2i endA = a.Last();
-
-        Vec2i startB = b[0];
-        Vec2i endB = b.Last();
-        // manhattan distance :)
-        return Math.Abs(endA.Item0 - startB.Item0) + Math.Abs(endA.Item1 - startB.Item1);
-    }
-
-    private Mat PrepImage(Mat screenShot, Vector2 targetRes)
-    {
-        Mat greyScale = new();
-        ResizeImage(screenShot, greyScale, new Vector2(640, 480));
-        // ResizeImage(screenShot, greyScale, new Vector2(320, 240));
-        ResizeImage(greyScale, greyScale, targetRes);
-        Cv2.CvtColor(greyScale, greyScale, ColorConversionCodes.BGRA2GRAY);
-
-
-        Mat edges = new Mat();
-        Cv2.GaussianBlur(greyScale, greyScale, new(5, 5), 1.4);
-        double otsuThresh = Cv2.Threshold(greyScale, edges, 0, 255, ThresholdTypes.Binary | ThresholdTypes.Otsu);
-
-        Cv2.Canny(greyScale, edges, otsuThresh * 0.5f, otsuThresh);
-        return edges;
-    }
-    private Mat DrawLines(List<List<Vec2i>> lines, int width, int height)
-    {
-        Mat output = Mat.Zeros(height, width, MatType.CV_8UC1);
-
-        foreach (List<Vec2i> line in lines)
-        {
-            OpenCvSharp.Point[] points = new OpenCvSharp.Point[line.Count];
-
-            for (int i = 0; i < line.Count; i++)
-            {
-                points[i] = new OpenCvSharp.Point(
-                    line[i].Item0, // x
-                    line[i].Item1  // y
-                );
-            }
-
-            Cv2.Polylines(
-                output,
-                new[] { points },
-                false,              // do not close the line
-                Scalar.White,
-                1,
-                LineTypes.Link8
-            );
-        }
-
-        return output;
     }
 
     private List<List<Vec2i>> CustomLineTrace(Mat src)
@@ -369,13 +266,6 @@ class Encoder
         return listOfregions;
     }
 
-    private bool IsPointValid(int row, int col, int rowCount, int colCount)
-    {
-        return row >= 0 &&
-               row < rowCount &&
-               col >= 0 &&
-               col < colCount;
-    }
     private List<List<Vec2i>> MakeTwoPointLines(List<List<Vec2i>> lines)
     {
         List<List<Vec2i>> result = new();
@@ -391,11 +281,112 @@ class Encoder
         return result;
     }
 
+    private Mat DrawLines(List<List<Vec2i>> lines, int width, int height)
+    {
+        Mat output = Mat.Zeros(height, width, MatType.CV_8UC1);
+
+        foreach (List<Vec2i> line in lines)
+        {
+            OpenCvSharp.Point[] points = new OpenCvSharp.Point[line.Count];
+
+            for (int i = 0; i < line.Count; i++)
+            {
+                points[i] = new OpenCvSharp.Point(
+                    line[i].Item0, // x
+                    line[i].Item1  // y
+                );
+            }
+
+            Cv2.Polylines(
+                output,
+                new[] { points },
+                false,              // do not close the line
+                Scalar.White,
+                1,
+                LineTypes.Link8
+            );
+        }
+
+        return output;
+    }
+
+    private List<List<int>> LinearPredictor(List<List<Vec2i>> lines)
+    {
+        int predicitedDx = 0;
+        int predicitedDy = 0;
+        List<int> predictionsX = new();
+        List<int> predictionsY = new();
+        List<int> actualDxs = new();
+        List<int> actualDys = new();
+        Vec2i endLastLine = new(0, 0);
+        foreach (List<Vec2i> line in lines)
+        {
+
+            int predictedX = endLastLine.Item0 + predicitedDx;
+            int predictedY = endLastLine.Item1 + predicitedDy;
+
+            int errorX = line[0].Item0 - predictedX;
+            int errorY = line[0].Item1 - predictedY;
+
+            predictionsX.Add(errorX);
+            predictionsY.Add(errorY);
+
+            int actualDx = line[1].Item0 - line[0].Item0;
+            int actualDy = line[1].Item1 - line[0].Item1;
+
+            actualDxs.Add(actualDx);
+            actualDys.Add(actualDy);
+
+            predicitedDx = actualDx;
+            predicitedDy = actualDy;
+            endLastLine = line[1];
+        }
+        return [predictionsX, predictionsY, actualDxs, actualDys];
+    }
+
+    private Mat PrepImage(Mat screenShot, Vector2 targetRes)
+    {
+        Mat greyScale = new();
+        ResizeImage(screenShot, greyScale, new Vector2(640, 480));
+        ResizeImage(greyScale, greyScale, targetRes);
+        Cv2.CvtColor(greyScale, greyScale, ColorConversionCodes.BGRA2GRAY);
+
+
+        Mat edges = new Mat();
+        Cv2.GaussianBlur(greyScale, greyScale, new(5, 5), 1.4);
+        double otsuThresh = Cv2.Threshold(greyScale, edges, 0, 255, ThresholdTypes.Binary | ThresholdTypes.Otsu);
+
+        Cv2.Canny(greyScale, edges, otsuThresh * 0.5f, otsuThresh);
+        return edges;
+    }
+
     private Mat ResizeImage(Mat image, Mat outMat, Vector2 targetRes)
     {
         OpenCvSharp.Size size = new(targetRes.X, targetRes.Y);
         Cv2.Resize(image, outMat, size, 0, 0, InterpolationFlags.Area);
         return outMat;
     }
+    private int LineDeltaCost(List<Vec2i> a, List<Vec2i> b)
+    {
+        Vec2i startA = a[0];
+        Vec2i endA = a.Last();
 
+        Vec2i startB = b[0];
+        Vec2i endB = b.Last();
+        // manhattan distance :)
+        return Math.Abs(endA.Item0 - startB.Item0) + Math.Abs(endA.Item1 - startB.Item1);
+    }
+    private uint ZigZagEncode(int value)
+    {
+        //https://lemire.me/blog/2022/11/25/making-all-your-integers-positive-with-zigzag-encoding/
+        return (uint)((value << 1) ^ (value >> 31));
+    }
+
+    private bool IsPointValid(int row, int col, int rowCount, int colCount)
+    {
+        return row >= 0 &&
+               row < rowCount &&
+               col >= 0 &&
+               col < colCount;
+    }
 }

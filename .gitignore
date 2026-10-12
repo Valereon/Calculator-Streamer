@@ -3,7 +3,9 @@ __pycache__/
 *.py[cod]
 *$py.class
 
-csharp/calcStreaming/calculatorC/
+csharp/calcStreaming/calculatorC/CEdev-Windows
+csharp/calcStreaming/calculatorC/obj
+csharp/calcStreaming/calculatorC/bin
 
 # C extensions
 *.so
