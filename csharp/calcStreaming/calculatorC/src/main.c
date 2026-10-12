@@ -262,6 +262,73 @@ void Reset()
     memset(srl_buf, 0, sizeof(srl_buf));
 }
 
+void HandleKeyPresses()
+{
+    if (kb_IsDown(kb_Key1))
+    {
+        scaling = 0;
+    }
+    else if (kb_IsDown(kb_Key2))
+    {
+        scaling = 1;
+    }
+    else if (kb_IsDown(kb_Key3))
+    {
+        scaling = 2;
+    }
+    else if (kb_IsDown(kb_KeyUp))
+    {
+        doubleThresh += 1;
+    }
+    else if (kb_IsDown(kb_KeyDown))
+    {
+        doubleThresh -= 1;
+    }
+    else if (kb_IsDown(kb_KeyLeft))
+    {
+        paddingScaling -= 1;
+    }
+    else if (kb_IsDown(kb_KeyRight))
+    {
+        paddingScaling += 1;
+    }
+}
+
+bool PrepPayloadSize()
+{
+    if (payloadSize == 2 && buff[0] == 255)
+    {
+        GetNextBits(8);
+        payloadSize = (uint16_t)GetNextBits(16) + 2;
+        if (payloadSize > sizeof(buff))
+        {
+            Reset();
+            return false;
+        }
+    }
+    if (bytes_read < payloadSize)
+    {
+        return false;
+    }
+    if (buff[0] != 255)
+    {
+        Reset();
+        return false;
+    }
+    return true;
+}
+
+bool ReadSerial()
+{
+    int n = srl_Read(&srl, buff + bytes_read, sizeof(buff) - bytes_read);
+
+    if (n < 0)
+        return false;
+
+    bytes_read += n;
+    return true;
+}
+
 int main(void)
 {
     os_ClrHome();
@@ -270,7 +337,6 @@ int main(void)
     gfx_FillScreen(0);
     gfx_SwapDraw();
     gfx_SetColor(255);
-    int n;
     const usb_standard_descriptors_t *desc = srl_GetCDCStandardDescriptors();
     /* Initialize the USB driver with our event handler and the serial device descriptors */
     usb_error_t usb_error = usb_Init(handle_usb_event, NULL, desc, USB_DEFAULT_INIT_FLAGS);
@@ -294,62 +360,11 @@ int main(void)
         if (!has_srl_device)
             continue;
 
-        n = srl_Read(&srl, buff + bytes_read, sizeof(buff) - bytes_read);
-
-        if (n < 0)
+        if (!ReadSerial())
             break;
 
-        bytes_read += n;
-
-        if (payloadSize == 2 && buff[0] == 255)
-        {
-            GetNextBits(8);
-            payloadSize = (uint16_t)GetNextBits(16);
-            if (payloadSize > sizeof(buff))
-            {
-                Reset();
-                continue;
-            }
-            payloadSize += 2;
-        }
-        if (bytes_read < payloadSize)
-        {
+        if (!PrepPayloadSize())
             continue;
-        }
-        if (buff[0] != 255)
-        {
-            Reset();
-            continue;
-        }
-
-        if (kb_IsDown(kb_Key1))
-        {
-            scaling = 0;
-        }
-        else if (kb_IsDown(kb_Key2))
-        {
-            scaling = 1;
-        }
-        else if (kb_IsDown(kb_Key3))
-        {
-            scaling = 2;
-        }
-        else if (kb_IsDown(kb_KeyUp))
-        {
-            doubleThresh += 1;
-        }
-        else if (kb_IsDown(kb_KeyDown))
-        {
-            doubleThresh -= 1;
-        }
-        else if (kb_IsDown(kb_KeyLeft))
-        {
-            paddingScaling -= 1;
-        }
-        else if (kb_IsDown(kb_KeyRight))
-        {
-            paddingScaling += 1;
-        }
 
         uint32_t pointLenghts = GetNextBits(16);
         int16_t *data = DecodeBitStream(pointLenghts * 4); // this is *4 because there is 4 arrays in the bitstream and they are all the same length so its just a single int of how big one is

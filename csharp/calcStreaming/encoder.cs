@@ -43,7 +43,9 @@ class Encoder
 
             // 1 is half resolution and 2 is quarter (based on >> shift so powers of 2)
 
-            // ScaleRenderResolution(twoPoint, 2);
+            ScaleRenderResolution(twoPoint, 1);
+
+
 
             List<List<Vec2i>> sortedLines = SortLines(twoPoint, 10);
 
@@ -121,8 +123,12 @@ class Encoder
             for (int j = 0; j < points[i].Count; j++)
             {
                 Vec2i point = points[i][j];
+                int parityX = point.Item0 & 1;
+                int parityY = point.Item1 & 1;
                 point.Item0 >>= factor;
                 point.Item1 >>= factor;
+                point.Item0 |= parityX;
+                point.Item1 |= parityY;
                 points[i][j] = point;
             }
         }
