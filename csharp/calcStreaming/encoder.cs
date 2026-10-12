@@ -35,14 +35,16 @@ class Encoder
             Mat edges = PrepImage(screenShot, targetRes);
 
             List<List<Vec2i>> connected = CustomLineTrace(edges);
+            if(connected.Count == 0)
+                continue;
 
             List<List<Vec2i>> twoPoint = MakeTwoPointLines(connected);
 
 
             // 1 is half resolution and 2 is quarter (based on >> shift so powers of 2)
 
-            ScaleRenderResolution(twoPoint, 1);
-            
+            // ScaleRenderResolution(twoPoint, 2);
+
             List<List<Vec2i>> sortedLines = SortLines(twoPoint, 10);
 
             List<List<int>> residuals = LinearPredictor(sortedLines);
@@ -64,7 +66,7 @@ class Encoder
             Mat recon = DrawLines(sortedLines, 320, 240);
             // for(int i = 0; i < encoded.Count; i++)
             // {
-                
+
             // }
             port.Write(encoded.ToArray(), 0, encoded.Count);
             watch.Stop();
@@ -279,7 +281,14 @@ class Encoder
         {
             if (line.Count >= 2)
             {
-                result.Add([line[0], line.Last()]);
+                Vec2i start = line[0];
+                Vec2i end = line.Last();
+
+
+                if (start.Item0 != end.Item0 || start.Item1 != end.Item1)
+                {
+                    result.Add([start, end]);
+                }
             }
         }
 
@@ -308,7 +317,7 @@ class Encoder
                 false,              // do not close the line
                 Scalar.White,
                 1,
-                LineTypes.Link8
+                LineTypes.Link4
             );
         }
 

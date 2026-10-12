@@ -93,9 +93,10 @@ uint32_t buffer = 0;
 uint16_t streamIndex = 0;
 uint16_t payloadSize = 2;
 uint16_t bitCount = 0;
-
-int upscaleFactor = 1;
 int bytes_read = 0;
+int scaling = 0;
+int paddingScaling = 0;
+int doubleThresh = 4;
 bool hasReachedEnd = false;
 
 int16_t UnZigZag(uint16_t n)
@@ -192,13 +193,24 @@ void DrawLines(int16_t *inputArray, int16_t length)
         int16_t actualDx = inputArray[length * 2 + i];
         int16_t actualDy = inputArray[length * 3 + i];
 
-        int16_t renderStartX = startX << 1;
-        int16_t renderStartY = startY << 1;
-        int16_t renderDx = actualDx << 1;
-        int16_t renderDy = actualDy << 1;
-
         if (actualDx != 0)
         { // line is horizotnal
+
+            int16_t len = abs(actualDx);
+            int16_t padding = 0;
+
+            if (len <= doubleThresh)
+            {
+                padding = 2;
+            }
+            else
+            {
+                padding = 0;
+            }
+            int16_t renderStartX = (startX << scaling) - ((padding << paddingScaling) >> 2);
+            int16_t renderStartY = startY << scaling;
+            int16_t renderDx = (len << scaling) + (padding << paddingScaling);
+
             if (renderDx < 0)
             {
                 renderDx = -renderDx;
@@ -209,6 +221,20 @@ void DrawLines(int16_t *inputArray, int16_t length)
         }
         else if (actualDy != 0)
         { // line is vertical
+
+            int16_t len = abs(actualDx);
+            int16_t padding = 0;
+            if (len <= doubleThresh)
+            {
+                padding = 2;
+            }
+            else
+            {
+                padding = 1;
+            }
+            int16_t renderStartX = (startX << scaling) - ((padding << paddingScaling) >> 2);
+            int16_t renderStartY = (startY << scaling);
+            int16_t renderDy = (len << scaling) + (padding << paddingScaling);
             if (renderDy < 0)
             {
                 renderDy = -renderDy;
@@ -244,7 +270,7 @@ int main(void)
     gfx_FillScreen(0);
     gfx_SwapDraw();
     gfx_SetColor(255);
-    int n = 0;
+    int n;
     const usb_standard_descriptors_t *desc = srl_GetCDCStandardDescriptors();
     /* Initialize the USB driver with our event handler and the serial device descriptors */
     usb_error_t usb_error = usb_Init(handle_usb_event, NULL, desc, USB_DEFAULT_INIT_FLAGS);
@@ -275,24 +301,54 @@ int main(void)
 
         bytes_read += n;
 
-        if (bytes_read < 2)
-            continue;
-
         if (payloadSize == 2 && buff[0] == 255)
         {
             GetNextBits(8);
             payloadSize = (uint16_t)GetNextBits(16);
+            if (payloadSize > sizeof(buff))
+            {
+                Reset();
+                continue;
+            }
             payloadSize += 2;
         }
         if (bytes_read < payloadSize)
         {
             continue;
         }
-
         if (buff[0] != 255)
         {
             Reset();
             continue;
+        }
+
+        if (kb_IsDown(kb_Key1))
+        {
+            scaling = 0;
+        }
+        else if (kb_IsDown(kb_Key2))
+        {
+            scaling = 1;
+        }
+        else if (kb_IsDown(kb_Key3))
+        {
+            scaling = 2;
+        }
+        else if (kb_IsDown(kb_KeyUp))
+        {
+            doubleThresh += 1;
+        }
+        else if (kb_IsDown(kb_KeyDown))
+        {
+            doubleThresh -= 1;
+        }
+        else if (kb_IsDown(kb_KeyLeft))
+        {
+            paddingScaling -= 1;
+        }
+        else if (kb_IsDown(kb_KeyRight))
+        {
+            paddingScaling += 1;
         }
 
         uint32_t pointLenghts = GetNextBits(16);
