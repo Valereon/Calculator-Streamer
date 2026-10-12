@@ -89,22 +89,22 @@ static usb_error_t handle_usb_event(usb_event_t event, void *event_data, usb_cal
     return USB_SUCCESS;
 }
 
-uint32_t buffer = 0;
-uint16_t streamIndex = 0;
-uint16_t payloadSize = 2;
-uint16_t bitCount = 0;
+int buffer = 0;
+int streamIndex = 0;
+int payloadSize = 2;
+int bitCount = 0;
 int bytes_read = 0;
 int scaling = 0;
 int paddingScaling = 0;
 int doubleThresh = 4;
 bool hasReachedEnd = false;
 
-int16_t UnZigZag(uint16_t n)
+int UnZigZag(int n)
 {
     return (n >> 1) ^ (-(n & 1));
 }
 
-void EnsureBits(int16_t len)
+void EnsureBits(int len)
 {
     if (hasReachedEnd)
         return;
@@ -123,13 +123,13 @@ void EnsureBits(int16_t len)
         bitCount += 8;
     }
 }
-void Consume(uint16_t len)
+void Consume(int len)
 {
     buffer = buffer >> len; // move buffer down len bits
     bitCount -= len;        // sub that
 }
 
-uint32_t GetNextBits(uint16_t len)
+int GetNextBits(int len)
 {
     if (hasReachedEnd)
         return 1;
@@ -149,17 +149,17 @@ uint32_t GetNextBits(uint16_t len)
     return result; // return bits of len by shifting the bit len to the right then subtracting one to fill all lower bits to make a mask
 }
 
-uint16_t GetNextBit()
+int GetNextBit()
 {
     return GetNextBits(1);
 }
 
-int16_t *DecodeBitStream(int16_t totalNumbers) // total numbers here should be multipled by 4 for the 4 identical length bitstreams
+int *DecodeBitStream(int totalNumbers) // total numbers here should be multipled by 4 for the 4 identical length bitstreams
 {
-    int16_t *results = malloc(totalNumbers * sizeof(int16_t));
-    for (int16_t i = 0; i < totalNumbers; i++)
+    int *results = malloc(totalNumbers * sizeof(int));
+    for (int i = 0; i < totalNumbers; i++)
     {
-        int16_t count = 0;
+        int count = 0;
         while (GetNextBit() == 0 && !hasReachedEnd)
         {
             count += 1;
@@ -167,37 +167,37 @@ int16_t *DecodeBitStream(int16_t totalNumbers) // total numbers here should be m
         if (hasReachedEnd)
             return results;
         uint16_t fixed = (1u << count) | GetNextBits(count);
-        int16_t number = UnZigZag(fixed - 1);
+        int number = UnZigZag(fixed - 1);
         results[i] = number;
     }
     return results;
 }
 
-void DrawLines(int16_t *inputArray, int16_t length)
+void DrawLines(int *inputArray, int length)
 {
 
-    int16_t predictedDx = 0;
-    int16_t predictedDy = 0;
+    int predictedDx = 0;
+    int predictedDy = 0;
 
-    int16_t endX = inputArray[0];
-    int16_t endY = inputArray[length];
+    int endX = inputArray[0];
+    int endY = inputArray[length];
 
-    for (int16_t i = 1; i < length; i++)
+    for (int i = 1; i < length; i++)
     {
-        int16_t predictedX = endX + predictedDx;
-        int16_t predictedY = endY + predictedDy;
+        int predictedX = endX + predictedDx;
+        int predictedY = endY + predictedDy;
 
-        int16_t startX = predictedX + inputArray[i];
-        int16_t startY = predictedY + inputArray[length + i];
+        int startX = predictedX + inputArray[i];
+        int startY = predictedY + inputArray[length + i];
 
-        int16_t actualDx = inputArray[length * 2 + i];
-        int16_t actualDy = inputArray[length * 3 + i];
+        int actualDx = inputArray[length * 2 + i];
+        int actualDy = inputArray[length * 3 + i];
 
         if (actualDx != 0)
         { // line is horizotnal
 
-            int16_t len = abs(actualDx);
-            int16_t padding = 0;
+            int len = abs(actualDx);
+            int padding = 0;
 
             if (len <= doubleThresh)
             {
@@ -207,9 +207,9 @@ void DrawLines(int16_t *inputArray, int16_t length)
             {
                 padding = 0;
             }
-            int16_t renderStartX = (startX << scaling) - ((padding << paddingScaling) >> 2);
-            int16_t renderStartY = startY << scaling;
-            int16_t renderDx = (len << scaling) + (padding << paddingScaling);
+            int renderStartX = (startX << scaling) - ((padding << paddingScaling) >> 2);
+            int renderStartY = startY << scaling;
+            int renderDx = (len << scaling) + (padding << paddingScaling);
 
             if (renderDx < 0)
             {
@@ -222,8 +222,8 @@ void DrawLines(int16_t *inputArray, int16_t length)
         else if (actualDy != 0)
         { // line is vertical
 
-            int16_t len = abs(actualDx);
-            int16_t padding = 0;
+            int len = abs(actualDx);
+            int padding = 0;
             if (len <= doubleThresh)
             {
                 padding = 2;
@@ -232,9 +232,9 @@ void DrawLines(int16_t *inputArray, int16_t length)
             {
                 padding = 1;
             }
-            int16_t renderStartX = (startX << scaling) - ((padding << paddingScaling) >> 2);
-            int16_t renderStartY = (startY << scaling);
-            int16_t renderDy = (len << scaling) + (padding << paddingScaling);
+            int renderStartX = (startX << scaling) - ((padding << paddingScaling) >> 2);
+            int renderStartY = (startY << scaling);
+            int renderDy = (len << scaling) + (padding << paddingScaling);
             if (renderDy < 0)
             {
                 renderDy = -renderDy;
@@ -366,8 +366,8 @@ int main(void)
         if (!PrepPayloadSize())
             continue;
 
-        uint32_t pointLenghts = GetNextBits(16);
-        int16_t *data = DecodeBitStream(pointLenghts * 4); // this is *4 because there is 4 arrays in the bitstream and they are all the same length so its just a single int of how big one is
+        int pointLenghts = GetNextBits(16);
+        int *data = DecodeBitStream(pointLenghts * 4); // this is *4 because there is 4 arrays in the bitstream and they are all the same length so its just a single int of how big one is
         DrawLines(data, pointLenghts);
 
         gfx_SwapDraw();
