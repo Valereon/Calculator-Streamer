@@ -9,6 +9,7 @@
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="OpenCvSharp5.Windows" Version="5.0.0.20260806" />
+    <PackageReference Include="RJCP.SerialPortStream" Version="3.0.5" />
     <PackageReference Include="ScreenCapture.NET" Version="3.0.0" />
     <PackageReference Include="System.IO.Ports" Version="10.0.12" />
   </ItemGroup>

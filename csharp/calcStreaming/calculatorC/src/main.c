@@ -23,7 +23,7 @@ bool has_srl_device = false;
 uint8_t srl_buf[4096];
 uint8_t buff[4096];
 
-int baud = 115200;
+int baud = 256000;
 
 static usb_error_t handle_usb_event(usb_event_t event, void *event_data, usb_callback_data_t *callback_data __attribute__((unused)))
 {
@@ -194,16 +194,26 @@ void DrawLines(int16_t *inputArray, int16_t length)
 
         int16_t renderStartX = startX << 1;
         int16_t renderStartY = startY << 1;
+        int16_t renderDx = actualDx << 1;
+        int16_t renderDy = actualDy << 1;
 
         if (actualDx != 0)
         { // line is horizotnal
-            
-            int16_t renderDx = actualDx << 1;
+            if (renderDx < 0)
+            {
+                renderDx = -renderDx;
+                renderStartX -= renderDx;
+            }
+            // this will NOT draw lines with a negatvie width, so you have to account for that
             gfx_HorizLine_NoClip(renderStartX, renderStartY, renderDx);
         }
         else if (actualDy != 0)
         { // line is vertical
-            int16_t renderDy = actualDy << 1;
+            if (renderDy < 0)
+            {
+                renderDy = -renderDy;
+                renderStartY -= renderDy;
+            }
             gfx_VertLine_NoClip(renderStartX, renderStartY, renderDy);
         }
 
@@ -231,8 +241,9 @@ int main(void)
     os_ClrHome();
     gfx_Begin();
     gfx_SetDrawBuffer();
-    gfx_FillScreen(255);
+    gfx_FillScreen(0);
     gfx_SwapDraw();
+    gfx_SetColor(255);
     int n = 0;
     const usb_standard_descriptors_t *desc = srl_GetCDCStandardDescriptors();
     /* Initialize the USB driver with our event handler and the serial device descriptors */
@@ -278,7 +289,8 @@ int main(void)
             continue;
         }
 
-        if (buff[0] != 255){
+        if (buff[0] != 255)
+        {
             Reset();
             continue;
         }
@@ -288,9 +300,8 @@ int main(void)
         DrawLines(data, pointLenghts);
 
         gfx_SwapDraw();
-        gfx_FillScreen(255);
+        gfx_FillScreen(0);
 
-        // gfx_FillScreen(255);
         free(data);
         data = NULL;
         Reset();

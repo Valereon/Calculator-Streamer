@@ -15,10 +15,10 @@ class Encoder
         cap.Set(VideoCaptureProperties.FrameWidth, 1920);
         cap.Set(VideoCaptureProperties.FrameHeight, 1080);
 
-        SerialPort port = new SerialPort("COM5", 115200, Parity.None, 8, StopBits.One);
-        // port.Handshake = Handshake.None;
-        // port.DtrEnable = true;
-        // port.RtsEnable = true;
+        SerialPort port = new SerialPort("COM5", 256000, Parity.None, 8, StopBits.One);
+        port.Handshake = Handshake.None;
+        port.DtrEnable = true;
+        port.RtsEnable = true;
         // port.ReadTimeout = 500;
         // port.WriteTimeout = 500;
         port.Open();
@@ -42,6 +42,7 @@ class Encoder
             // 1 is half resolution and 2 is quarter (based on >> shift so powers of 2)
 
             ScaleRenderResolution(twoPoint, 1);
+            
             List<List<Vec2i>> sortedLines = SortLines(twoPoint, 10);
 
             List<List<int>> residuals = LinearPredictor(sortedLines);
@@ -61,6 +62,10 @@ class Encoder
             }
 
             Mat recon = DrawLines(sortedLines, 320, 240);
+            // for(int i = 0; i < encoded.Count; i++)
+            // {
+                
+            // }
             port.Write(encoded.ToArray(), 0, encoded.Count);
             watch.Stop();
 
