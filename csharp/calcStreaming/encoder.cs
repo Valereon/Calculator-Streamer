@@ -2,6 +2,7 @@ using System.Numerics;
 using OpenCvSharp;
 using System.Diagnostics;
 using System.IO.Ports;
+using System.Text;
 
 
 class Encoder
@@ -15,16 +16,18 @@ class Encoder
         cap.Set(VideoCaptureProperties.FrameWidth, 1920);
         cap.Set(VideoCaptureProperties.FrameHeight, 1080);
 
-        SerialPort port = new SerialPort("COM5", 256000, Parity.None, 8, StopBits.One);
+        SerialPort port = new SerialPort("COM5", 921600, Parity.None, 8, StopBits.One);
         port.Handshake = Handshake.None;
-        port.DtrEnable = true;
-        port.RtsEnable = true;
+        // port.DtrEnable = true;
+        // port.RtsEnable = true;
         // port.ReadTimeout = 500;
         // port.WriteTimeout = 500;
         port.Open();
 
+
         while (true)
         {
+
 
             watch.Reset();
             watch.Start();
@@ -35,7 +38,7 @@ class Encoder
             Mat edges = PrepImage(screenShot, targetRes);
 
             List<List<Vec2i>> connected = CustomLineTrace(edges);
-            if(connected.Count == 0)
+            if (connected.Count == 0)
                 continue;
 
             List<List<Vec2i>> twoPoint = MakeTwoPointLines(connected);
@@ -70,12 +73,28 @@ class Encoder
             // {
 
             // }
-            port.Write(encoded.ToArray(), 0, encoded.Count);
+            port.BaseStream.Write(encoded.ToArray(), 0, encoded.Count);
+            port.BaseStream.Flush();
             watch.Stop();
 
             Cv2.ImShow("wah", recon);
             Cv2.WaitKey(1);
             Console.WriteLine($"Frame Time : {watch.ElapsedMilliseconds} :: FPS {MathF.Round((float)(11.5 * 1024 / encoded.Count), 2)} :: Bytes {encoded.Count}");
+            watch.Reset();
+            watch.Start();
+            while (port.BytesToRead == 0)
+                continue;
+
+            // Console.WriteLine(port.BytesToRead);
+            byte[] result = new byte[3];
+            port.Read(result, 0, 3);
+            watch.Stop();
+            Console.WriteLine(watch.ElapsedMilliseconds);
+            if (result[0] != 200 || result[1] != 220 || result[2] != 250)
+            {
+                Console.WriteLine("FUCK");
+            }
+            port.DiscardInBuffer();
         }
     }
 

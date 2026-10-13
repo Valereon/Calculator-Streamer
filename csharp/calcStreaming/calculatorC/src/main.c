@@ -23,7 +23,7 @@ bool has_srl_device = false;
 uint8_t srl_buf[4096];
 uint8_t buff[4096];
 
-int baud = 256000;
+int baud = 921600 ;
 
 static usb_error_t handle_usb_event(usb_event_t event, void *event_data, usb_callback_data_t *callback_data __attribute__((unused)))
 {
@@ -91,7 +91,7 @@ static usb_error_t handle_usb_event(usb_event_t event, void *event_data, usb_cal
 
 int buffer = 0;
 int streamIndex = 0;
-int payloadSize = 2;
+uint16_t payloadSize = 2;
 int bitCount = 0;
 int bytes_read = 0;
 int scaling = 0;
@@ -193,24 +193,13 @@ void DrawLines(int *inputArray, int length)
         int actualDx = inputArray[length * 2 + i];
         int actualDy = inputArray[length * 3 + i];
 
+        int renderStartX = startX << scaling;
+        int renderStartY = startY << scaling;
+        int renderDx = actualDx << scaling;
+        int renderDy = actualDy << scaling;
+
         if (actualDx != 0)
         { // line is horizotnal
-
-            int len = abs(actualDx);
-            int padding = 0;
-
-            if (len <= doubleThresh)
-            {
-                padding = 2;
-            }
-            else
-            {
-                padding = 0;
-            }
-            int renderStartX = (startX << scaling) - ((padding << paddingScaling) >> 2);
-            int renderStartY = startY << scaling;
-            int renderDx = (len << scaling) + (padding << paddingScaling);
-
             if (renderDx < 0)
             {
                 renderDx = -renderDx;
@@ -221,20 +210,6 @@ void DrawLines(int *inputArray, int length)
         }
         else if (actualDy != 0)
         { // line is vertical
-
-            int len = abs(actualDx);
-            int padding = 0;
-            if (len <= doubleThresh)
-            {
-                padding = 2;
-            }
-            else
-            {
-                padding = 1;
-            }
-            int renderStartX = (startX << scaling) - ((padding << paddingScaling) >> 2);
-            int renderStartY = (startY << scaling);
-            int renderDy = (len << scaling) + (padding << paddingScaling);
             if (renderDy < 0)
             {
                 renderDy = -renderDy;
@@ -260,9 +235,10 @@ void Reset()
     hasReachedEnd = false;
     memset(buff, 0, sizeof(buff));
     memset(srl_buf, 0, sizeof(srl_buf));
+    srl_Write(&srl, (uint8_t[]){200, 220, 250}, 3);
 }
 
-void HandleKeyPresses()
+void HandleCustomKeyBinds()
 {
     if (kb_IsDown(kb_Key1))
     {
@@ -359,16 +335,18 @@ int main(void)
 
         if (!has_srl_device)
             continue;
+        HandleCustomKeyBinds();
 
         if (!ReadSerial())
             break;
 
-        if (!PrepPayloadSize())
+        if (!PrepPayloadSize()){
             continue;
+        }
 
-        int pointLenghts = GetNextBits(16);
-        int *data = DecodeBitStream(pointLenghts * 4); // this is *4 because there is 4 arrays in the bitstream and they are all the same length so its just a single int of how big one is
-        DrawLines(data, pointLenghts);
+        int pointLengths = GetNextBits(16);
+        int *data = DecodeBitStream(pointLengths * 4); // this is *4 because there is 4 arrays in the bitstream and they are all the same length so its just a single int of how big one is
+        DrawLines(data, pointLengths);
 
         gfx_SwapDraw();
         gfx_FillScreen(0);
