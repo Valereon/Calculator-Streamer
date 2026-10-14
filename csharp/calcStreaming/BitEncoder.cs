@@ -25,7 +25,7 @@ class BitEncoder
     }
     public void Flush()
     {
-        if (bitCount > 8)
+        if (bitCount > 0)
         {
             outputBytes.Add((byte)(buffer & 0xFF));
             buffer = 0;

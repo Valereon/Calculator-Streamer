@@ -22,8 +22,9 @@ bool has_srl_device = false;
 
 uint8_t srl_buf[4096];
 uint8_t buff[4096];
+uint8_t currentFrame[4096];
 
-int baud = 921600 ;
+int baud = 921600;
 
 static usb_error_t handle_usb_event(usb_event_t event, void *event_data, usb_callback_data_t *callback_data __attribute__((unused)))
 {
@@ -89,20 +90,19 @@ static usb_error_t handle_usb_event(usb_event_t event, void *event_data, usb_cal
     return USB_SUCCESS;
 }
 
-int buffer = 0;
-int streamIndex = 0;
-uint16_t payloadSize = 2;
+int frameStart = 0;
+int bitBuffer = 0;
+int streamIndex = 3;
+uint16_t payloadSize = 0;
 int bitCount = 0;
 int bytes_read = 0;
-int scaling = 0;
-int paddingScaling = 0;
-int doubleThresh = 4;
 bool hasReachedEnd = false;
 
-int UnZigZag(int n)
-{
-    return (n >> 1) ^ (-(n & 1));
-}
+int framingOverhead = 3;
+int totalMessageSize;
+int bufferSize;
+int correctBufferSize;
+int frameIndex;
 
 void EnsureBits(int len)
 {
@@ -111,22 +111,17 @@ void EnsureBits(int len)
 
     while (bitCount < len)
     {
-        if (streamIndex > payloadSize)
+        if (streamIndex >= payloadSize + framingOverhead)
         {
             hasReachedEnd = true;
             return;
         }
 
-        uint8_t byte = buff[streamIndex];
-        buffer = buffer | (byte << bitCount); // move the incoming byte up bitcount len to fill unused bits
+        uint8_t byte = currentFrame[streamIndex];
+        bitBuffer = bitBuffer | (byte << bitCount); // move the incoming byte up bitcount len to fill unused bits
         streamIndex += 1;
         bitCount += 8;
     }
-}
-void Consume(int len)
-{
-    buffer = buffer >> len; // move buffer down len bits
-    bitCount -= len;        // sub that
 }
 
 int GetNextBits(int len)
@@ -144,14 +139,10 @@ int GetNextBits(int len)
         return 1;
     }
 
-    uint32_t result = buffer & ((1U << len) - 1);
-    Consume(len);
-    return result; // return bits of len by shifting the bit len to the right then subtracting one to fill all lower bits to make a mask
-}
-
-int GetNextBit()
-{
-    return GetNextBits(1);
+    uint32_t result = bitBuffer & ((1U << len) - 1);
+    bitBuffer = bitBuffer >> len; // move buffer down len bits
+    bitCount -= len;              // sub that
+    return result;                // return bits of len by shifting the bit len to the right then subtracting one to fill all lower bits to make a mask
 }
 
 int *DecodeBitStream(int totalNumbers) // total numbers here should be multipled by 4 for the 4 identical length bitstreams
@@ -160,14 +151,14 @@ int *DecodeBitStream(int totalNumbers) // total numbers here should be multipled
     for (int i = 0; i < totalNumbers; i++)
     {
         int count = 0;
-        while (GetNextBit() == 0 && !hasReachedEnd)
+        while (GetNextBits(1) == 0 && !hasReachedEnd)
         {
             count += 1;
         }
         if (hasReachedEnd)
             return results;
-        uint16_t fixed = (1u << count) | GetNextBits(count);
-        int number = UnZigZag(fixed - 1);
+        uint16_t fixed = ((1u << count) | GetNextBits(count)) - 1;
+        int number = (fixed >> 1) ^ (-(fixed & 1));
         results[i] = number;
     }
     return results;
@@ -179,24 +170,39 @@ void DrawLines(int *inputArray, int length)
     int predictedDx = 0;
     int predictedDy = 0;
 
-    int endX = inputArray[0];
-    int endY = inputArray[length];
+    int endX = 0;
+    int endY = 0;
 
-    for (int i = 1; i < length; i++)
+    int predictedX;
+    int predictedY;
+
+    int startX;
+    int startY;
+
+    int actualDx;
+    int actualDy;
+
+    int renderStartX;
+    int renderStartY;
+
+    int renderDx;
+    int renderDy;
+
+    for (int i = 0; i < length; i++)
     {
-        int predictedX = endX + predictedDx;
-        int predictedY = endY + predictedDy;
+        predictedX = endX + predictedDx;
+        predictedY = endY + predictedDy;
 
-        int startX = predictedX + inputArray[i];
-        int startY = predictedY + inputArray[length + i];
+        startX = predictedX + inputArray[i];
+        startY = predictedY + inputArray[length + i];
 
-        int actualDx = inputArray[length * 2 + i];
-        int actualDy = inputArray[length * 3 + i];
+        actualDx = inputArray[(length + length) + i];
+        actualDy = inputArray[(length + length + length) + i];
 
-        int renderStartX = startX << scaling;
-        int renderStartY = startY << scaling;
-        int renderDx = actualDx << scaling;
-        int renderDy = actualDy << scaling;
+        renderStartX = startX << 1;
+        renderStartY = startY << 1;
+        renderDx = actualDx << 1;
+        renderDy = actualDy << 1;
 
         if (actualDx != 0)
         { // line is horizotnal
@@ -227,62 +233,29 @@ void DrawLines(int *inputArray, int length)
 
 void Reset()
 {
-    streamIndex = 0;
-    payloadSize = 2;
+    streamIndex = framingOverhead;
+    payloadSize = 0;
     bitCount = 0;
-    buffer = 0;
+    bitBuffer = 0;
     bytes_read = 0;
     hasReachedEnd = false;
-    memset(buff, 0, sizeof(buff));
-    memset(srl_buf, 0, sizeof(srl_buf));
-    srl_Write(&srl, (uint8_t[]){200, 220, 250}, 3);
+    memset(buff, 0, payloadSize + framingOverhead);
+    memset(srl_buf, 0, payloadSize + framingOverhead);
+    memset(currentFrame, 0, bufferSize);
 }
 
-void HandleCustomKeyBinds()
+bool SetupFrame()
 {
-    if (kb_IsDown(kb_Key1))
+    if (payloadSize == 0 && buff[0] == 255)
     {
-        scaling = 0;
-    }
-    else if (kb_IsDown(kb_Key2))
-    {
-        scaling = 1;
-    }
-    else if (kb_IsDown(kb_Key3))
-    {
-        scaling = 2;
-    }
-    else if (kb_IsDown(kb_KeyUp))
-    {
-        doubleThresh += 1;
-    }
-    else if (kb_IsDown(kb_KeyDown))
-    {
-        doubleThresh -= 1;
-    }
-    else if (kb_IsDown(kb_KeyLeft))
-    {
-        paddingScaling -= 1;
-    }
-    else if (kb_IsDown(kb_KeyRight))
-    {
-        paddingScaling += 1;
-    }
-}
-
-bool PrepPayloadSize()
-{
-    if (payloadSize == 2 && buff[0] == 255)
-    {
-        GetNextBits(8);
-        payloadSize = (uint16_t)GetNextBits(16) + 2;
-        if (payloadSize > sizeof(buff))
+        payloadSize = ((uint16_t)buff[2] << 8) | buff[1];
+        if (payloadSize + framingOverhead > bufferSize)
         {
             Reset();
             return false;
         }
     }
-    if (bytes_read < payloadSize)
+    if (bytes_read < payloadSize + framingOverhead)
     {
         return false;
     }
@@ -305,6 +278,11 @@ bool ReadSerial()
     return true;
 }
 
+void SendACK()
+{
+    srl_Write(&srl, (uint8_t[]){200, 220, 250}, 3);
+}
+
 int main(void)
 {
     os_ClrHome();
@@ -316,6 +294,7 @@ int main(void)
     const usb_standard_descriptors_t *desc = srl_GetCDCStandardDescriptors();
     /* Initialize the USB driver with our event handler and the serial device descriptors */
     usb_error_t usb_error = usb_Init(handle_usb_event, NULL, desc, USB_DEFAULT_INIT_FLAGS);
+    bufferSize = sizeof(buff);
 
     if (usb_error)
     {
@@ -335,17 +314,25 @@ int main(void)
 
         if (!has_srl_device)
             continue;
-        HandleCustomKeyBinds();
 
         if (!ReadSerial())
             break;
 
-        if (!PrepPayloadSize()){
+        if (!SetupFrame())
             continue;
-        }
+
+        // frameIndex = frameStart % bufferSize;
+        // if (frameIndex == 0)
+        // {
+        //     frameStart = 0;
+        // }
+        memcpy(currentFrame, buff, payloadSize + framingOverhead);
+        // frameStart += (payloadSize + framingOverhead);
+        SendACK();
+        usb_HandleEvents();
 
         int pointLengths = GetNextBits(16);
-        int *data = DecodeBitStream(pointLengths * 4); // this is *4 because there is 4 arrays in the bitstream and they are all the same length so its just a single int of how big one is
+        int *data = DecodeBitStream(pointLengths * 4);
         DrawLines(data, pointLengths);
 
         gfx_SwapDraw();

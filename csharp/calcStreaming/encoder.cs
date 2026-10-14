@@ -20,8 +20,8 @@ class Encoder
         port.Handshake = Handshake.None;
         // port.DtrEnable = true;
         // port.RtsEnable = true;
-        // port.ReadTimeout = 500;
-        // port.WriteTimeout = 500;
+        port.ReadTimeout = 1000;
+        port.WriteTimeout = 1000;
         port.Open();
 
 
@@ -29,8 +29,7 @@ class Encoder
         {
 
 
-            watch.Reset();
-            watch.Start();
+
 
             Mat screenShot = new();
             cap.Read(screenShot);
@@ -69,12 +68,9 @@ class Encoder
             }
 
             Mat recon = DrawLines(sortedLines, 320, 240);
-            // for(int i = 0; i < encoded.Count; i++)
-            // {
-
-            // }
-            port.BaseStream.Write(encoded.ToArray(), 0, encoded.Count);
-            port.BaseStream.Flush();
+            watch.Reset();
+            watch.Start();
+            port.Write(encoded.ToArray(), 0, encoded.Count);
             watch.Stop();
 
             Cv2.ImShow("wah", recon);
@@ -82,19 +78,14 @@ class Encoder
             Console.WriteLine($"Frame Time : {watch.ElapsedMilliseconds} :: FPS {MathF.Round((float)(11.5 * 1024 / encoded.Count), 2)} :: Bytes {encoded.Count}");
             watch.Reset();
             watch.Start();
-            while (port.BytesToRead == 0)
-                continue;
+
 
             // Console.WriteLine(port.BytesToRead);
-            byte[] result = new byte[3];
-            port.Read(result, 0, 3);
+            byte[] result = new byte[3]; // literally just a magic ACK doenst matter what it is really
+            port.Read(result, 0, result.Length);
+
             watch.Stop();
             Console.WriteLine(watch.ElapsedMilliseconds);
-            if (result[0] != 200 || result[1] != 220 || result[2] != 250)
-            {
-                Console.WriteLine("FUCK");
-            }
-            port.DiscardInBuffer();
         }
     }
 
@@ -107,7 +98,6 @@ class Encoder
         positionEncoder.Write(first, 8);
         positionEncoder.Write(last, 8);
 
-        Dictionary<int, int> keyValuePairs = new();
         for (int i = 0; i < lines.Count; i++)
         {
             // int code = (1 << (len - 1)) - 2;
