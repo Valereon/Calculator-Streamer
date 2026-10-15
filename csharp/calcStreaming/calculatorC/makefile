@@ -2,9 +2,9 @@
 # Makefile Options
 # ----------------------------
 
-NAME = DEMO
+NAME = Streamer
 ICON = icon.png
-DESCRIPTION = "CE C Toolchain Demo"
+DESCRIPTION = "Desktop Edge Streamer"
 COMPRESSED = NO
 
 CFLAGS = -Wall -Wextra -Oz

@@ -76,16 +76,16 @@ class Encoder
             Cv2.ImShow("wah", recon);
             Cv2.WaitKey(1);
             Console.WriteLine($"Frame Time : {watch.ElapsedMilliseconds} :: FPS {MathF.Round((float)(11.5 * 1024 / encoded.Count), 2)} :: Bytes {encoded.Count}");
+
             watch.Reset();
             watch.Start();
-
-
-            // Console.WriteLine(port.BytesToRead);
             byte[] result = new byte[3]; // literally just a magic ACK doenst matter what it is really
             port.Read(result, 0, result.Length);
 
             watch.Stop();
             Console.WriteLine(watch.ElapsedMilliseconds);
+
+
         }
     }
 
