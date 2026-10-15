@@ -16,12 +16,12 @@ class Encoder
         cap.Set(VideoCaptureProperties.FrameWidth, 1920);
         cap.Set(VideoCaptureProperties.FrameHeight, 1080);
 
-        SerialPort port = new SerialPort("COM5", 921600, Parity.None, 8, StopBits.One);
+        SerialPort port = new SerialPort("COM5", 115200, Parity.None, 8, StopBits.One);
         port.Handshake = Handshake.None;
         // port.DtrEnable = true;
         // port.RtsEnable = true;
-        port.ReadTimeout = 1000;
-        port.WriteTimeout = 1000;
+        // port.ReadTimeout = 1000;
+        // port.WriteTimeout = 1000;
         port.Open();
 
 
@@ -71,6 +71,7 @@ class Encoder
             watch.Reset();
             watch.Start();
             port.Write(encoded.ToArray(), 0, encoded.Count);
+            port.BaseStream.Flush();
             watch.Stop();
 
             Cv2.ImShow("wah", recon);

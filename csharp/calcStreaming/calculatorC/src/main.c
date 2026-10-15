@@ -39,7 +39,7 @@ typedef struct
 
 typedef struct
 {
-    int payloadSize;     // so there is 3 bytes of overhead this iS NOT INCLUDING THAT
+    uint16_t payloadSize;     // so there is 3 bytes of overhead this iS NOT INCLUDING THAT
     int framingOverhead; // this is the overhead
     int totalSize;       // THIS is the total byte count including all framing
 } Framing;
@@ -52,11 +52,19 @@ typedef struct
     bool hasEnded;
 } Context;
 
+USBCallBackSerial* globalSerialCtx;
 bool has_srl_device = false;
+
+
+#define FRAME_BUFFER_SIZE 4096
+#define SERIAL_BUFFER_SIZE 512
+
+
+static uint8_t srlBuff[FRAME_BUFFER_SIZE];
+static uint8_t buff[FRAME_BUFFER_SIZE];
 
 static usb_error_t handle_usb_event(usb_event_t event, void *event_data, usb_callback_data_t *callback_data __attribute__((unused)))
 {
-    USBCallBackSerial *usbContext = (USBCallBackSerial *)callback_data;
 
     usb_error_t err;
     /* Delegate to srl USB callback */
@@ -93,7 +101,7 @@ static usb_error_t handle_usb_event(usb_event_t event, void *event_data, usb_cal
         }
 
         /* Initialize the serial library with the newly attached device */
-        srl_error_t error = srl_Open(&usbContext->ctx->srl, device, usbContext->srlBuff, usbContext->ctx->bufferSize, SRL_INTERFACE_ANY, usbContext->ctx->baud);
+        srl_error_t error = srl_Open(&globalSerialCtx->ctx->srl, device, globalSerialCtx->srlBuff, globalSerialCtx->ctx->bufferSize, SRL_INTERFACE_ANY, globalSerialCtx->ctx->baud);
         if (error)
         {
             /* Print the error code to the homescreen */
@@ -109,10 +117,10 @@ static usb_error_t handle_usb_event(usb_event_t event, void *event_data, usb_cal
     if (event == USB_DEVICE_DISCONNECTED_EVENT)
     {
         usb_device_t device = event_data;
-        if (device == usbContext->ctx->srl.dev)
+        if (device == globalSerialCtx->ctx->srl.dev)
         {
             printf("device disconnected\n");
-            srl_Close(&usbContext->ctx->srl);
+            srl_Close(&globalSerialCtx->ctx->srl);
             has_srl_device = false;
         }
     }
@@ -122,48 +130,52 @@ static usb_error_t handle_usb_event(usb_event_t event, void *event_data, usb_cal
 
 void EnsureBits(Context *ctx, int len)
 {
+    Accumulator* accum = ctx->accum;
     if (ctx->hasEnded)
         return;
 
-    while (ctx->accum->count < len)
+    while (accum->count < len)
     {
-        if (ctx->accum->index >= ctx->frame->totalSize)
+        if (accum->index >= ctx->frame->totalSize)
         {
             ctx->hasEnded = true;
             return;
         }
 
-        uint8_t byte = ctx->data[ctx->accum->index];
-        ctx->accum->buffer |= (byte << ctx->accum->count); // move the incoming byte up bitcount len to fill unused bits
-        ctx->accum->index += 1;
-        ctx->accum->count += 8;
+        uint8_t byte = ctx->data[accum->index];
+        accum->buffer |= (byte << accum->count); // move the incoming byte up bitcount len to fill unused bits
+        accum->index += 1;
+        accum->count += 8;
     }
 }
 
 int GetNextBits(Context *ctx, int len)
 {
+    Accumulator* accum = ctx->accum;
     if (ctx->hasEnded)
         return 1;
 
-    if (len > ctx->accum->count)
+    if (len > accum->count)
     {
         EnsureBits(ctx, len);
     }
-    if (len > ctx->accum->count)
+    if (len > accum->count)
     {
         ctx->hasEnded = true;
         return 1;
     }
 
-    int result = ctx->accum->buffer & ((1U << len) - 1);
-    ctx->accum->buffer >>= len;
-    ctx->accum->count -= len;
+    int result = accum->buffer & ((1U << len) - 1);
+    accum->buffer >>= len;
+    accum->count -= len;
     return result;
 }
 
 int *DecodeBitStream(Context *ctx, int totalNumbers) // total numbers here should be multipled by 4 for the 4 identical length bitstreams
 {
     int *results = malloc(totalNumbers * sizeof(int));
+    if (results == NULL)
+        return NULL;
     for (int i = 0; i < totalNumbers; i++)
     {
         int count = 0;
@@ -254,15 +266,18 @@ void Reset(Context *ctx, SerialContext *serialCtx, uint8_t *srlBuffPtr, int *byt
 {
     *bytesRead = 0;
     ctx->frame->payloadSize = 0;
+    ctx->frame->totalSize = 0;
     ctx->accum->count = 0;
     ctx->accum->buffer = 0;
+    ctx->accum->index = ctx->frame->framingOverhead;
     ctx->hasEnded = false;
-    memset(ctx->data, 0, serialCtx->bufferSize);
+    // memset(ctx->data, 0, serialCtx->bufferSize);
     // memset(srlBuffPtr, 0, serialCtx->bufferSize);
 }
 
 bool SetupFrame(Context *ctx, SerialContext *serialCtx, int bytesRead)
 {
+
     if (bytesRead < 3)
     {
         if (bytesRead > 0 && ctx->data[0] != 255)
@@ -271,7 +286,10 @@ bool SetupFrame(Context *ctx, SerialContext *serialCtx, int bytesRead)
         }
         return true;
     }
-
+    if (ctx->data[0] != 255)
+    {
+        return false;
+    }
     if (ctx->frame->payloadSize == 0 && ctx->data[0] == 255)
     {
         ctx->frame->payloadSize = ((uint16_t)ctx->data[2] << 8) | ctx->data[1];
@@ -280,10 +298,6 @@ bool SetupFrame(Context *ctx, SerialContext *serialCtx, int bytesRead)
         {
             return false;
         }
-    }
-    if (ctx->data[0] != 255)
-    {
-        return false;
     }
     return true;
 }
@@ -302,7 +316,7 @@ void SendACK(SerialContext *serialCtx)
     srl_Write(&serialCtx->srl, (uint8_t[]){200, 220, 250}, 3);
 }
 
-int StartConnection(USBCallBackSerial *callbackContext)
+int StartConnection()
 {
     os_ClrHome();
     gfx_Begin();
@@ -311,9 +325,9 @@ int StartConnection(USBCallBackSerial *callbackContext)
     gfx_SwapDraw();
     gfx_SetColor(255);
     const usb_standard_descriptors_t *desc = srl_GetCDCStandardDescriptors();
-    usb_error_t usb_error = usb_Init(handle_usb_event, callbackContext, desc, USB_DEFAULT_INIT_FLAGS);
+    usb_error_t usb_error = usb_Init(handle_usb_event, NULL, desc, USB_DEFAULT_INIT_FLAGS);
     if (usb_error)
-    {
+    { 
         usb_Cleanup();
         printf("usb init error %u\n", usb_error);
         do
@@ -328,21 +342,18 @@ int main(void)
 {
 
     int bytesRead = 0;
-    // ALL THREE OF THESE
-    // THESE NEED TO BE THE SAME SIZE!!!!!
-    int bufferSize = 4096;
-    uint8_t srlBuff[4096];
-    uint8_t buff[4096];
-    // END
 
-    SerialContext serialCtx = {.baud = 115200, .bufferSize = bufferSize};
-    Accumulator accum = {.buffer = 0, .count = 0, .index = 0};
+    SerialContext serialCtx = {.baud = 115200, .bufferSize = FRAME_BUFFER_SIZE};
     Framing frame = {.framingOverhead = 3, .payloadSize = 0, .totalSize = 0};
+    Accumulator accum = {.buffer = 0, .count = 0, .index = frame.framingOverhead};
     USBCallBackSerial callBackContext = {.ctx = &serialCtx, .srlBuff = srlBuff};
+    globalSerialCtx = &callBackContext;
 
     Context ctx = {.data = buff, .hasEnded = false, .accum = &accum, .frame = &frame};
+    
 
-    int code = StartConnection(&callBackContext);
+
+    int code = StartConnection();
     if (code == 1)
         return 1;
 
@@ -359,7 +370,19 @@ int main(void)
 
         if (amountRead < 0)
             break;
+
         bytesRead += amountRead;
+
+        // gfx_SetTextXY(10, 10);
+        // gfx_PrintInt(bytesRead, 1);
+        // gfx_SetTextXY(10, 20);
+        // gfx_PrintInt(ctx.frame->payloadSize, 1);
+        // gfx_SetTextXY(10, 30);
+        // gfx_PrintInt(amountRead, 1);
+
+
+        // gfx_SwapDraw();
+        // gfx_FillScreen(255);
 
         if (!SetupFrame(&ctx, &serialCtx, bytesRead))
             Reset(&ctx, &serialCtx, srlBuff, &bytesRead);
@@ -377,7 +400,6 @@ int main(void)
         data = NULL;
 
         SendACK(&serialCtx);
-        usb_HandleEvents();
         Reset(&ctx, &serialCtx, srlBuff, &bytesRead);
 
     } while (!kb_IsDown(kb_KeyClear));
