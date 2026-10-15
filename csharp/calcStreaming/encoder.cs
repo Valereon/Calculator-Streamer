@@ -41,33 +41,16 @@ class Encoder
                 continue;
 
             List<List<Vec2i>> twoPoint = MakeTwoPointLines(connected);
-
-
-            // 1 is half resolution and 2 is quarter (based on >> shift so powers of 2)
-
-            ScaleRenderResolution(twoPoint, 1);
-
-
-
             List<List<Vec2i>> sortedLines = SortLines(twoPoint, 10);
 
-            List<List<int>> residuals = LinearPredictor(sortedLines);
-            List<byte> encoded = SerializeImage(residuals);
+
+            List<byte> encoded = SerializeImage(sortedLines);
             encoded.Insert(0, 255);
 
 
-            for (int i = 0; i < sortedLines.Count; i++)
-            {
-                for (int j = 0; j < sortedLines[i].Count; j++)
-                {
-                    Vec2i point = sortedLines[i][j];
-                    point.Item0 <<= 1;
-                    point.Item1 <<= 1;
-                    sortedLines[i][j] = point;
-                }
-            }
 
-            Mat recon = DrawLines(sortedLines, 320, 240);
+
+            Mat recon = DrawLines(sortedLines, 255, 240);
             watch.Reset();
             watch.Start();
             port.Write(encoded.ToArray(), 0, encoded.Count);
@@ -76,14 +59,13 @@ class Encoder
 
             Cv2.ImShow("wah", recon);
             Cv2.WaitKey(1);
-            Console.WriteLine($"Frame Time : {watch.ElapsedMilliseconds} :: FPS {MathF.Round((float)(11.5 * 1024 / encoded.Count), 2)} :: Bytes {encoded.Count}");
+            Console.WriteLine($"Frame Time : {1000/watch.ElapsedMilliseconds} :: FPS {MathF.Round((float)(11.5 * 1024 / encoded.Count), 2)} :: Bytes {encoded.Count}");
 
-            watch.Reset();
-            watch.Start();
+
             byte[] result = new byte[3]; // literally just a magic ACK doenst matter what it is really
             port.Read(result, 0, result.Length);
 
-            watch.Stop();
+  
             Console.WriteLine(watch.ElapsedMilliseconds);
 
 
@@ -91,58 +73,30 @@ class Encoder
     }
 
 
-    private List<byte> SerializeImage(List<List<int>> lines)
+    private List<byte> SerializeImage(List<List<Vec2i>> lines)
     {
         BitEncoder positionEncoder = new();
-        byte first = (byte)(lines[0].Count & 0xFF);
-        byte last = (byte)(lines[0].Count >> 8);
+        int totalLength = lines.Count*4;
+        byte first = (byte)(totalLength & 0xFF);
+        byte last = (byte)(totalLength >> 8);
         positionEncoder.Write(first, 8);
         positionEncoder.Write(last, 8);
 
         for (int i = 0; i < lines.Count; i++)
         {
-            // int code = (1 << (len - 1)) - 2;
-            for (int j = 0; j < lines[i].Count; j++)
-            {
-                int num = lines[i][j];
-                uint zagged = ZigZagEncode(num) + 1; // bc of elias needs >=1
-
-
-                int l = (int)Math.Floor(Math.Log2(zagged));
-                int remainingBits = (int)(zagged & ((1 << l) - 1));
-
-                positionEncoder.Write(0, l);
-                positionEncoder.Write(1, 1);
-                positionEncoder.Write(remainingBits, l);
-
-            }
+            positionEncoder.Write((byte)lines[i][0].Item0, 8);
+            positionEncoder.Write((byte)lines[i][0].Item1, 8);
+            positionEncoder.Write((byte)lines[i][1].Item0, 8);
+            positionEncoder.Write((byte)lines[i][1].Item1, 8);
         }
-
 
         positionEncoder.Flush();
         List<byte> positionEncoded = positionEncoder.GetData();
-        positionEncoded.Insert(0, (byte)(positionEncoded.Count & 0xFF)); // last byte 
-        positionEncoded.Insert(1, (byte)(positionEncoded.Count >> 8)); // first byte of 16 btis
+        positionEncoded.Insert(0, (byte)(positionEncoded.Count & 0xFF));
+        positionEncoded.Insert(1, (byte)(positionEncoded.Count >> 8));
         return positionEncoded;
     }
 
-    private void ScaleRenderResolution(List<List<Vec2i>> points, int factor)
-    {
-        for (int i = 0; i < points.Count; i++)
-        {
-            for (int j = 0; j < points[i].Count; j++)
-            {
-                Vec2i point = points[i][j];
-                int parityX = point.Item0 & 1;
-                int parityY = point.Item1 & 1;
-                point.Item0 >>= factor;
-                point.Item1 >>= factor;
-                point.Item0 |= parityX;
-                point.Item1 |= parityY;
-                points[i][j] = point;
-            }
-        }
-    }
 
     private List<List<Vec2i>> SortLines(List<List<Vec2i>> lines, int startingChecks)
     {
@@ -188,7 +142,6 @@ class Encoder
         //todo later make it so that it can run in two directions basically right now it just picks and runs but i think
         // it should be able to do 8 dircetions like north and northwest but not north and east you get it? like so that it can follow a simple
         //slope
-        int blackLength = 4;
 
         int[][] directions =
         {
@@ -223,7 +176,6 @@ class Encoder
                 int innerR = r;
                 int innerC = c;
                 int[] trueDirection = [];
-                int totalBlack = 0;
                 while (true)
                 {
                     int node = innerR * colsCount + innerC;
@@ -268,10 +220,7 @@ class Encoder
 
                     if (nextValue == 0)
                     {
-                        totalBlack += 1;
-                        if (totalBlack >= blackLength)
-                            break;
-                        continue;
+                        break;
                     }
 
                     visited[nextRow, nextCol] = true;
@@ -340,40 +289,6 @@ class Encoder
         return output;
     }
 
-    private List<List<int>> LinearPredictor(List<List<Vec2i>> lines)
-    {
-        int predicitedDx = 0;
-        int predicitedDy = 0;
-        List<int> predictionsX = new();
-        List<int> predictionsY = new();
-        List<int> actualDxs = new();
-        List<int> actualDys = new();
-        Vec2i endLastLine = new(0, 0);
-        foreach (List<Vec2i> line in lines)
-        {
-
-            int predictedX = endLastLine.Item0 + predicitedDx;
-            int predictedY = endLastLine.Item1 + predicitedDy;
-
-            int errorX = line[0].Item0 - predictedX;
-            int errorY = line[0].Item1 - predictedY;
-
-            predictionsX.Add(errorX);
-            predictionsY.Add(errorY);
-
-            int actualDx = line[1].Item0 - line[0].Item0;
-            int actualDy = line[1].Item1 - line[0].Item1;
-
-            actualDxs.Add(actualDx);
-            actualDys.Add(actualDy);
-
-            predicitedDx = actualDx;
-            predicitedDy = actualDy;
-            endLastLine = line[1];
-        }
-        return [predictionsX, predictionsY, actualDxs, actualDys];
-    }
-
     private Mat PrepImage(Mat screenShot, Vector2 targetRes)
     {
         Mat greyScale = new();
@@ -403,15 +318,9 @@ class Encoder
 
         Vec2i startB = b[0];
         Vec2i endB = b.Last();
-        // manhattan distance :)
+        // manhattan distance :) //
         return Math.Abs(endA.Item0 - startB.Item0) + Math.Abs(endA.Item1 - startB.Item1);
     }
-    private uint ZigZagEncode(int value)
-    {
-        //https://lemire.me/blog/2022/11/25/making-all-your-integers-positive-with-zigzag-encoding/
-        return (uint)((value << 1) ^ (value >> 31));
-    }
-
     private bool IsPointValid(int row, int col, int rowCount, int colCount)
     {
         return row >= 0 &&

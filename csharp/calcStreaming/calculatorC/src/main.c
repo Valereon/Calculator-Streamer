@@ -8,7 +8,6 @@
  */
 
 #include <srldrvce.h>
-
 #include <debug.h>
 #include <keypadc.h>
 #include <stdbool.h>
@@ -32,36 +31,25 @@ typedef struct
 
 typedef struct
 {
-    int index;
-    int count;
-    int buffer;
-} Accumulator;
-
-typedef struct
-{
-    uint16_t payloadSize;     // so there is 3 bytes of overhead this iS NOT INCLUDING THAT
-    int framingOverhead; // this is the overhead
-    int totalSize;       // THIS is the total byte count including all framing
+    uint16_t payloadSize; // so there is 3 bytes of overhead this iS NOT INCLUDING THAT
+    int framingOverhead;  // this is the overhead
+    int totalSize;        // THIS is the total byte count including all framing
 } Framing;
 
 typedef struct
 {
     uint8_t *data;
-    Accumulator *accum;
     Framing *frame;
     bool hasEnded;
 } Context;
 
-USBCallBackSerial* globalSerialCtx;
+USBCallBackSerial *globalSerialCtx;
 bool has_srl_device = false;
 
-
-#define FRAME_BUFFER_SIZE 4096
-#define SERIAL_BUFFER_SIZE 512
-
-
-static uint8_t srlBuff[FRAME_BUFFER_SIZE];
-static uint8_t buff[FRAME_BUFFER_SIZE];
+#define FRAMING_OVERHEAD 3
+#define BUFFER_SIZE 8192
+static uint8_t srlBuff[BUFFER_SIZE];
+static uint8_t buff[BUFFER_SIZE];
 
 static usb_error_t handle_usb_event(usb_event_t event, void *event_data, usb_callback_data_t *callback_data __attribute__((unused)))
 {
@@ -128,137 +116,38 @@ static usb_error_t handle_usb_event(usb_event_t event, void *event_data, usb_cal
     return USB_SUCCESS;
 }
 
-void EnsureBits(Context *ctx, int len)
+void DrawLines(Context *ctx, int length)
 {
-    Accumulator* accum = ctx->accum;
-    if (ctx->hasEnded)
-        return;
 
-    while (accum->count < len)
+    for (int i = ctx->frame->framingOverhead+2; i < length; i += 4)
     {
-        if (accum->index >= ctx->frame->totalSize)
+
+        uint8_t startX = ctx->data[i];
+        uint8_t startY = ctx->data[i + 1];
+        uint8_t endX = ctx->data[i + 2];
+        uint8_t endY = ctx->data[i + 3];
+
+        int dx = endX - startX;
+        int dy = endY - startY;
+
+        if (dx != 0)
         {
-            ctx->hasEnded = true;
-            return;
-        }
-
-        uint8_t byte = ctx->data[accum->index];
-        accum->buffer |= (byte << accum->count); // move the incoming byte up bitcount len to fill unused bits
-        accum->index += 1;
-        accum->count += 8;
-    }
-}
-
-int GetNextBits(Context *ctx, int len)
-{
-    Accumulator* accum = ctx->accum;
-    if (ctx->hasEnded)
-        return 1;
-
-    if (len > accum->count)
-    {
-        EnsureBits(ctx, len);
-    }
-    if (len > accum->count)
-    {
-        ctx->hasEnded = true;
-        return 1;
-    }
-
-    int result = accum->buffer & ((1U << len) - 1);
-    accum->buffer >>= len;
-    accum->count -= len;
-    return result;
-}
-
-int *DecodeBitStream(Context *ctx, int totalNumbers) // total numbers here should be multipled by 4 for the 4 identical length bitstreams
-{
-    int *results = malloc(totalNumbers * sizeof(int));
-    if (results == NULL)
-        return NULL;
-    for (int i = 0; i < totalNumbers; i++)
-    {
-        int count = 0;
-        while (GetNextBits(ctx, 1) == 0 && !ctx->hasEnded)
-        {
-            count += 1;
-        }
-        if (ctx->hasEnded)
-            return results;
-        uint16_t fixed = ((1u << count) | GetNextBits(ctx, count)) - 1;
-        int number = (fixed >> 1) ^ (-(fixed & 1));
-        results[i] = number;
-    }
-    return results;
-}
-
-void DrawLines(int *inputArray, int length)
-{
-
-    int predictedDx = 0;
-    int predictedDy = 0;
-
-    int endX = 0;
-    int endY = 0;
-
-    int predictedX;
-    int predictedY;
-
-    int startX;
-    int startY;
-
-    int actualDx;
-    int actualDy;
-
-    int renderStartX;
-    int renderStartY;
-
-    int renderDx;
-    int renderDy;
-
-    int doubleLen = length * 2;
-    int tripleLen = length * 3;
-
-    for (int i = 0; i < length; i++)
-    {
-        predictedX = endX + predictedDx;
-        predictedY = endY + predictedDy;
-
-        startX = predictedX + inputArray[i];
-        startY = predictedY + inputArray[length + i];
-
-        actualDx = inputArray[doubleLen + i];
-        actualDy = inputArray[tripleLen + i];
-
-        renderStartX = startX << 1;
-        renderStartY = startY << 1;
-        renderDx = actualDx << 1;
-        renderDy = actualDy << 1;
-
-        if (actualDx != 0)
-        {
-            if (renderDx < 0)
+            if (dx < 0)
             {
-                renderDx = -renderDx;
-                renderStartX -= renderDx;
+                dx = -dx;
+                startX -= dx;
             }
-
-            gfx_HorizLine_NoClip(renderStartX, renderStartY, renderDx);
+            gfx_HorizLine_NoClip(startX, startY, dx);
         }
-        else if (actualDy != 0)
+        else if (dy != 0)
         {
-            if (renderDy < 0)
+            if (dy < 0)
             {
-                renderDy = -renderDy;
-                renderStartY -= renderDy;
+                dy = -dy;
+                startY -= dy;
             }
-            gfx_VertLine_NoClip(renderStartX, renderStartY, renderDy);
+            gfx_VertLine_NoClip(startX, startY, dy);
         }
-
-        predictedDx = actualDx;
-        predictedDy = actualDy;
-        endX = startX + actualDx;
-        endY = startY + actualDy;
     }
 }
 
@@ -267,12 +156,7 @@ void Reset(Context *ctx, SerialContext *serialCtx, uint8_t *srlBuffPtr, int *byt
     *bytesRead = 0;
     ctx->frame->payloadSize = 0;
     ctx->frame->totalSize = 0;
-    ctx->accum->count = 0;
-    ctx->accum->buffer = 0;
-    ctx->accum->index = ctx->frame->framingOverhead;
     ctx->hasEnded = false;
-    // memset(ctx->data, 0, serialCtx->bufferSize);
-    // memset(srlBuffPtr, 0, serialCtx->bufferSize);
 }
 
 bool SetupFrame(Context *ctx, SerialContext *serialCtx, int bytesRead)
@@ -327,7 +211,7 @@ int StartConnection()
     const usb_standard_descriptors_t *desc = srl_GetCDCStandardDescriptors();
     usb_error_t usb_error = usb_Init(handle_usb_event, NULL, desc, USB_DEFAULT_INIT_FLAGS);
     if (usb_error)
-    { 
+    {
         usb_Cleanup();
         printf("usb init error %u\n", usb_error);
         do
@@ -343,15 +227,11 @@ int main(void)
 
     int bytesRead = 0;
 
-    SerialContext serialCtx = {.baud = 115200, .bufferSize = FRAME_BUFFER_SIZE};
-    Framing frame = {.framingOverhead = 3, .payloadSize = 0, .totalSize = 0};
-    Accumulator accum = {.buffer = 0, .count = 0, .index = frame.framingOverhead};
+    SerialContext serialCtx = {.baud = 115200, .bufferSize = BUFFER_SIZE};
+    Framing frame = {.framingOverhead = FRAMING_OVERHEAD, .payloadSize = 0, .totalSize = 0};
     USBCallBackSerial callBackContext = {.ctx = &serialCtx, .srlBuff = srlBuff};
     globalSerialCtx = &callBackContext;
-
-    Context ctx = {.data = buff, .hasEnded = false, .accum = &accum, .frame = &frame};
-    
-
+    Context ctx = {.data = buff, .hasEnded = false, .frame = &frame};
 
     int code = StartConnection();
     if (code == 1)
@@ -372,14 +252,12 @@ int main(void)
             break;
 
         bytesRead += amountRead;
-
         // gfx_SetTextXY(10, 10);
         // gfx_PrintInt(bytesRead, 1);
         // gfx_SetTextXY(10, 20);
         // gfx_PrintInt(ctx.frame->payloadSize, 1);
         // gfx_SetTextXY(10, 30);
         // gfx_PrintInt(amountRead, 1);
-
 
         // gfx_SwapDraw();
         // gfx_FillScreen(255);
@@ -389,15 +267,16 @@ int main(void)
         else if (bytesRead < ctx.frame->totalSize)
             continue;
 
-        int pointLengths = GetNextBits(&ctx, 16);
-        int *data = DecodeBitStream(&ctx, pointLengths * 4);
-        DrawLines(data, pointLengths);
+        int pointLengths = ((uint16_t)ctx.data[4] << 8) | ctx.data[3];
 
+        DrawLines(&ctx, pointLengths);
+        // gfx_SetTextXY(10, 10);
+        // gfx_PrintInt(pointLengths, 1);
+
+        // gfx_SwapDraw();
+        // gfx_FillScreen(255);
         gfx_SwapDraw();
         gfx_FillScreen(0);
-
-        free(data);
-        data = NULL;
 
         SendACK(&serialCtx);
         Reset(&ctx, &serialCtx, srlBuff, &bytesRead);

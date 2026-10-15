@@ -7,7 +7,7 @@ ICON = icon.png
 DESCRIPTION = "Desktop Edge Streamer"
 COMPRESSED = NO
 
-CFLAGS = -Wall -Wextra -O3
+CFLAGS = -Wall -Wextra -Oz
 CXXFLAGS = -Wall -Wextra -Oz
 
 # ----------------------------
