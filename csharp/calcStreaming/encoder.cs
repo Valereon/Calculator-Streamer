@@ -10,7 +10,6 @@ class Encoder
     public void Encode(Vector2 targetRes)
     {
         Stopwatch watch = Stopwatch.StartNew();
-        // int frames = 0;
 
         VideoCapture cap = new VideoCapture(0, VideoCaptureAPIs.DSHOW);
         cap.Set(VideoCaptureProperties.FrameWidth, 1920);
@@ -18,10 +17,6 @@ class Encoder
 
         SerialPort port = new SerialPort("COM5", 115200, Parity.None, 8, StopBits.One);
         port.Handshake = Handshake.None;
-        // port.DtrEnable = true;
-        // port.RtsEnable = true;
-        // port.ReadTimeout = 1000;
-        // port.WriteTimeout = 1000;
         port.Open();
 
 
@@ -34,129 +29,134 @@ class Encoder
             Mat screenShot = new();
             cap.Read(screenShot);
 
+            
             Mat edges = PrepImage(screenShot, targetRes);
-
             List<List<Vec2i>> connected = CustomLineTrace(edges);
+
             if (connected.Count == 0)
                 continue;
 
-            List<List<Vec2i>> twoPoint = MakeTwoPointLines(connected);
-            List<List<List<Vec2i>>> groupedLines = SortHorizVertical(twoPoint);
 
+            List<Line> twoPoint = MakeTwoPointLines(connected);
+            List<List<Line>> groupedLines = SortHorizVertical(twoPoint);
             List<byte> encoded = SerializeImage(groupedLines);
 
 
-            Mat recon = DrawLines(twoPoint, 255, 240);
-            watch.Reset();
-            watch.Start();
-            port.Write(encoded.ToArray(), 0, encoded.Count);
-            port.BaseStream.Flush();
-            watch.Stop();
 
-            Cv2.ImShow("wah", recon);
-            Cv2.WaitKey(1);
+            watch.Restart();
+            port.Write(encoded.ToArray(), 0, encoded.Count);
+            watch.Stop();
             if (watch.ElapsedMilliseconds != 0)
                 Console.WriteLine($"Frame Time : {1000 / watch.ElapsedMilliseconds} :: FPS {MathF.Round((float)(11.5 * 1024 / encoded.Count), 2)} :: Bytes {encoded.Count}");
 
 
-            byte[] result = new byte[3]; // literally just a magic ACK doenst matter what it is really
+            byte[] result = new byte[3];
             port.Read(result, 0, result.Length);
 
 
-            Console.WriteLine(watch.ElapsedMilliseconds);
 
-
+            // just encoder side display
+            Mat recon = DrawLines(twoPoint, 255, 240);
+            Cv2.ImShow("wah", recon);
+            Cv2.WaitKey(1);
         }
     }
 
-    private List<List<List<Vec2i>>> SortHorizVertical(List<List<Vec2i>> lines)
+    private List<List<Line>> SortHorizVertical(List<Line> lines)
     {
-        List<List<Vec2i>> vertical = new();
-        List<List<Vec2i>> horizontal = new();
-        foreach (List<Vec2i> points in lines)
+        List<Line> vertical = new();
+        List<Line> horizontal = new();
+        foreach (Line line in lines)
         {
-            int dX = points[1].Item0 - points[0].Item0;
-            int dY = points[1].Item1 - points[0].Item1;
+            int dX = line.endX - line.startX;
+            int dY = line.endY - line.startY;
+
             if (dX != 0)
             {
-                horizontal.Add(points);
+                horizontal.Add(line);
             }
             else if (dY != 0)
             {
-                vertical.Add(points);
+                vertical.Add(line);
             }
         }
         return [horizontal, vertical];
     }
 
-    private List<byte> SerializeImage(List<List<List<Vec2i>>> lines)
+    private List<byte> SerializeImage(List<List<Line>> lines)
     {
-        BitEncoder positionEncoder = new();
-
-        int horizLength = lines[0].Count * 3;
-        byte first = (byte)(horizLength & 0xFF);
-        byte last = (byte)(horizLength >> 8);
-        positionEncoder.Write(first, 8);
-        positionEncoder.Write(last, 8);
-
-        int vertLength = lines[1].Count * 3;
-        first = (byte)(vertLength & 0xFF);
-        last = (byte)(vertLength >> 8);
-        positionEncoder.Write(first, 8);
-        positionEncoder.Write(last, 8);
-
+        List<byte> bytes = new();
 
         for (int i = 0; i < lines.Count; i++)
         {
-            for (int j = 0; j < lines[i].Count; j++)
+            foreach (Line line in lines[i])
             {
-                Vec2i startPoint = lines[i][j][0];
 
-                int deltaX = lines[i][j][1].Item0 - lines[i][j][0].Item0;
-                int deltaY = lines[i][j][1].Item1 - lines[i][j][0].Item1;
+                int deltaX = line.endX - line.startX;
+                int deltaY = line.endY - line.startY;
+                int delta = 0;
+
                 if (deltaX != 0)
                 {
                     if (deltaX < 0)
                     {
-                        deltaX = Math.Abs(deltaX);
-                        startPoint.Item0 -= deltaX / 2;
+                        delta = Math.Abs(deltaX);
+                        line.startX -= delta / 2;
                     }
-                    deltaX = Math.Abs(deltaX);
-                    positionEncoder.Write((byte)startPoint.Item0, 8);
-                    positionEncoder.Write((byte)startPoint.Item1, 8);
-                    positionEncoder.Write((byte)deltaX, 8);
+                    delta = Math.Abs(deltaX);
                 }
                 else if (deltaY != 0)
                 {
                     if (deltaY < 0)
                     {
-                        deltaY = Math.Abs(deltaY);
-                        startPoint.Item1 -= deltaY / 2;
+                        delta = Math.Abs(deltaY);
+                        line.startY -= delta / 2;
                     }
-                    deltaY = Math.Abs(deltaY);
-                    positionEncoder.Write((byte)startPoint.Item0, 8);
-                    positionEncoder.Write((byte)startPoint.Item1, 8);
-                    positionEncoder.Write((byte)deltaY, 8);
+                    delta = Math.Abs(deltaY);
                 }
+                bytes.Add((byte)line.startX);
+                bytes.Add((byte)line.startY);
+                bytes.Add((byte)delta);
             }
         }
 
-        positionEncoder.Flush();
-        List<byte> positionEncoded = positionEncoder.GetData();
-        List<byte> header = [255,200,255];
-        int totalSize = positionEncoded.Count + 2;
-        header.Add((byte)(totalSize & 0xFF));
-        header.Add((byte)(totalSize >> 8));
-        positionEncoded.InsertRange(0, header);
-        return positionEncoded;
+
+        int horizCount = lines[0].Count;
+        int vertCount = lines[1].Count;
+        List<byte> header = EncodeHeader(horizCount, vertCount, bytes.Count);
+        bytes.InsertRange(0, header);
+        return bytes;
+    }
+
+    private List<byte> GetIntAsShortBytes(int number)
+    {
+        byte first = (byte)(number & 0xFF);
+        byte last = (byte)(number >> 8);
+        return [first, last];
+    }
+
+
+    private List<byte> EncodeHeader(int horiz, int vert, int size)
+    {
+
+        int horizLength = horiz * 3;
+        List<byte> horizBytes = GetIntAsShortBytes(horizLength);
+
+        int vertLength = vert * 3;
+        List<byte> vertBytes = GetIntAsShortBytes(vertLength);
+
+        int totalSize = size + 2;
+        List<byte> sizeBytes = GetIntAsShortBytes(totalSize);
+
+        List<byte> header = [255, 200, 255];
+        header.AddRange(sizeBytes);
+        header.AddRange(horizBytes);
+        header.AddRange(vertBytes);
+        return header;
     }
 
     private List<List<Vec2i>> CustomLineTrace(Mat src)
     {
-        //todo later make it so that it can run in two directions basically right now it just picks and runs but i think
-        // it should be able to do 8 dircetions like north and northwest but not north and east you get it? like so that it can follow a simple
-        //slope
-
         int[][] directions =
         {
             [0,1],
@@ -164,23 +164,23 @@ class Encoder
             [1,0],
             [-1,0],
         };
-
-        int rowCount = src.Rows;
-        int colsCount = src.Cols;
-        bool[,] visited = new bool[rowCount, colsCount];
+        BreadthFSContext ctx = new();
+        ctx.rowCount = src.Rows;
+        ctx.colsCount = src.Cols;
+        ctx.visited = new bool[ctx.rowCount, ctx.colsCount];
 
         List<List<Vec2i>> listOfregions = new();
 
         MatRowAccessor<byte> imageRows = src.AsRows<byte>();
 
-        for (int r = 0; r < rowCount; r++)
+        for (int r = 0; r < ctx.rowCount; r++)
         {
-            for (int c = 0; c < colsCount; c++)
+            for (int c = 0; c < ctx.colsCount; c++)
             {
-                if (visited[r, c])
+                if (ctx.visited[r, c])
                     continue;
 
-                visited[r, c] = true;
+                ctx.visited[r, c] = true;
 
                 if (imageRows[r][c] == 0)
                     continue;
@@ -192,52 +192,24 @@ class Encoder
                 int[] trueDirection = [];
                 while (true)
                 {
-                    int node = innerR * colsCount + innerC;
-                    int row = node / colsCount;
-                    int col = node % colsCount;
+                    int node = innerR * ctx.colsCount + innerC;
+                    ctx.row = node / ctx.colsCount;
+                    ctx.col = node % ctx.colsCount;
 
                     if (trueDirection.Length == 0)
                     {
-                        foreach (int[] direction in directions)
-                        {
-                            int innerNextRow = row + direction[0];
-                            int innerNextCol = col + direction[1];
-
-                            if (!IsPointValid(innerNextRow, innerNextCol, rowCount, colsCount))
-                                continue;
-
-                            int innerNextValue = imageRows[innerNextRow][innerNextCol];
-
-                            if (innerNextValue > 0)
-                            {
-                                trueDirection = [direction[0], direction[1]];
-                                break;
-                            }
-                        }
+                        trueDirection = FindTrueDirection(ctx, directions, imageRows);
                         if (trueDirection.Length == 0)
                             break;
-
                     }
 
-
-
-                    int nextRow = row + trueDirection[0];
-                    int nextCol = col + trueDirection[1];
-
-                    if (!IsPointValid(nextRow, nextCol, rowCount, colsCount))
+                    if (!GoInTrueDirection(ctx, trueDirection, imageRows))
                         break;
 
-                    if (visited[nextRow, nextCol])
-                        break;
+                    int nextRow = ctx.row + trueDirection[0];
+                    int nextCol = ctx.col + trueDirection[1];
 
-                    int nextValue = imageRows[nextRow][nextCol];
-
-                    if (nextValue == 0)
-                    {
-                        break;
-                    }
-
-                    visited[nextRow, nextCol] = true;
+                    ctx.visited[nextRow, nextCol] = true;
                     innerR += trueDirection[0];
                     innerC += trueDirection[1];
                     group.Add(new Vec2i(nextCol, nextRow));
@@ -252,9 +224,52 @@ class Encoder
         return listOfregions;
     }
 
-    private List<List<Vec2i>> MakeTwoPointLines(List<List<Vec2i>> lines)
+    private int[] FindTrueDirection(BreadthFSContext ctx, int[][] directions, MatRowAccessor<byte> imageRows)
     {
-        List<List<Vec2i>> result = new();
+
+        int[] trueDirection = [];
+        foreach (int[] direction in directions)
+        {
+            int innerNextRow = ctx.row + direction[0];
+            int innerNextCol = ctx.col + direction[1];
+
+            if (!IsPointValid(innerNextRow, innerNextCol, ctx.rowCount, ctx.colsCount))
+                continue;
+
+            int innerNextValue = imageRows[innerNextRow][innerNextCol];
+
+            if (innerNextValue > 0)
+            {
+                trueDirection = [direction[0], direction[1]];
+                break;
+            }
+        }
+        return trueDirection;
+    }
+
+    private bool GoInTrueDirection(BreadthFSContext ctx, int[] trueDirection, MatRowAccessor<byte> imageRows)
+    {
+        int nextRow = ctx.row + trueDirection[0];
+        int nextCol = ctx.col + trueDirection[1];
+
+        if (!IsPointValid(nextRow, nextCol, ctx.rowCount, ctx.colsCount))
+            return false;
+
+        if (ctx.visited[nextRow, nextCol])
+            return false;
+
+        int nextValue = imageRows[nextRow][nextCol];
+
+        if (nextValue == 0)
+            return false;
+
+        return true;
+    }
+
+
+    private List<Line> MakeTwoPointLines(List<List<Vec2i>> lines)
+    {
+        List<Line> result = new();
 
         foreach (List<Vec2i> line in lines)
         {
@@ -266,7 +281,7 @@ class Encoder
 
                 if (start.Item0 != end.Item0 || start.Item1 != end.Item1)
                 {
-                    result.Add([start, end]);
+                    result.Add(new Line(start, end));
                 }
             }
         }
@@ -274,21 +289,23 @@ class Encoder
         return result;
     }
 
-    private Mat DrawLines(List<List<Vec2i>> lines, int width, int height)
+    private Mat DrawLines(List<Line> lines, int width, int height)
     {
         Mat output = Mat.Zeros(height, width, MatType.CV_8UC1);
 
-        foreach (List<Vec2i> line in lines)
+        foreach (Line line in lines)
         {
-            OpenCvSharp.Point[] points = new OpenCvSharp.Point[line.Count];
-
-            for (int i = 0; i < line.Count; i++)
-            {
-                points[i] = new OpenCvSharp.Point(
-                    line[i].Item0, // x
-                    line[i].Item1  // y
-                );
-            }
+            OpenCvSharp.Point[] points =
+            [
+                new OpenCvSharp.Point(
+                    line.startX, // x
+                    line.startY  // y
+                ),
+                new OpenCvSharp.Point(
+                    line.endX, // x
+                    line.endY  // y
+                ),
+            ];
 
             Cv2.Polylines(
                 output,
