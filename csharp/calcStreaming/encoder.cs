@@ -27,6 +27,8 @@ class Encoder
 
 
 
+            watch.Restart();
+
             Mat screenShot = new();
             cap.Read(screenShot);
 
@@ -44,16 +46,16 @@ class Encoder
 
 
 
-            watch.Restart();
             port.Write(encoded.ToArray(), 0, encoded.Count);
-            watch.Stop();
-            if (watch.ElapsedMilliseconds != 0)
-                Console.WriteLine($"Frame Time : {1000 / watch.ElapsedMilliseconds} :: FPS {MathF.Round((float)(11.5 * 1024 / encoded.Count), 2)} :: Bytes {encoded.Count}");
 
 
             byte[] result = new byte[3];
             port.Read(result, 0, result.Length);
+            
+            watch.Stop();
 
+            if (watch.ElapsedMilliseconds != 0)
+                Console.WriteLine($"Frame Time : {watch.ElapsedMilliseconds} :: FPS {1000 / watch.ElapsedMilliseconds} :: Bytes {encoded.Count}");
 
 
             // just encoder side display

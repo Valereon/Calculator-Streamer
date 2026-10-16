@@ -233,9 +233,6 @@ FrameResults GatherFrame(Context *ctx, SerialContext *serialCtx, int *bytesRead)
 
     while (*bytesRead < FRAMING_WIDTH)
     {
-        // kb_Scan();
-        // if (kb_IsDown(kb_KeyClear))
-        //     return FRAME_ERROR;
         if (!globalSerialCtx->has_srl_device)
             return FRAME_ERROR;
 
@@ -254,9 +251,6 @@ FrameResults GatherFrame(Context *ctx, SerialContext *serialCtx, int *bytesRead)
 
     while (*bytesRead < ctx->frame->totalSize)
     {
-        // kb_Scan();
-        // if (kb_IsDown(kb_KeyClear))
-        //     return FRAME_ERROR;
         if (!globalSerialCtx->has_srl_device)
             return FRAME_ERROR;
 
