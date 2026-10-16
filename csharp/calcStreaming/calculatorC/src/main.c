@@ -14,7 +14,19 @@
 #include <string.h>
 #include <tice.h>
 #include <graphx.h>
+#include <sys/timers.h>
 
+#define BUFFER_SIZE 5000
+#define MAGIC_BYTES_LENGTH 3
+
+#define PAYLOAD_INDEX 9
+#define FRAMING_WIDTH 5
+
+#define HORIZ_OFFSET 5
+#define VERT_OFFSET 7
+#define MESSAGE_SIZE_OFFSET 3
+
+// magic, magic, magic, len1, len2, hor1, hor2, vert1, vert2
 typedef struct
 {
     int baud;
@@ -27,26 +39,40 @@ typedef struct
 {
     SerialContext *ctx;
     uint8_t *srlBuff;
+    bool has_srl_device;
 } USBCallBackSerial;
 
 typedef struct
 {
-    uint16_t totalSize; // so there is 3 bytes of overhead this iS NOT INCLUDING THAT
+    uint16_t totalSize;
+    uint8_t startMagicBytes[MAGIC_BYTES_LENGTH];
+    uint8_t ackMagicBytes[MAGIC_BYTES_LENGTH];
+    uint16_t horizLength;
+    uint16_t vertLength;
 } Framing;
 
 typedef struct
 {
     uint8_t *data;
     Framing *frame;
-    bool hasEnded;
 } Context;
 
-USBCallBackSerial *globalSerialCtx;
-bool has_srl_device = false;
+typedef enum
+{
+    FRAME_OKAY,
+    FRAME_MALFORMED,
+    FRAME_ERROR
+} FrameResults;
 
-#define BEFORE_DATA_LENGTH 4
-#define BUFFER_SIZE 8192
-#define MAX_LINES 1000
+typedef enum
+{
+    FRAME_LENGTH_OKAY,
+    FRAME_LENGTH_OVERSIZED,
+    FRAME_HEADER_INCORRECT
+} FrameSize;
+
+USBCallBackSerial *globalSerialCtx;
+
 static uint8_t srlBuff[BUFFER_SIZE];
 static uint8_t buff[BUFFER_SIZE];
 
@@ -61,7 +87,7 @@ static usb_error_t handle_usb_event(usb_event_t event, void *event_data, usb_cal
     if (event == USB_DEVICE_CONNECTED_EVENT && !(usb_GetRole() & USB_ROLE_DEVICE))
     {
         usb_device_t device = event_data;
-        printf("device connected\n");
+
         usb_ResetDevice(device);
     }
 
@@ -70,7 +96,7 @@ static usb_error_t handle_usb_event(usb_event_t event, void *event_data, usb_cal
     {
 
         /* If we already have a serial device, ignore the new one */
-        if (has_srl_device)
+        if (globalSerialCtx->has_srl_device)
             return USB_SUCCESS;
 
         usb_device_t device;
@@ -92,13 +118,11 @@ static usb_error_t handle_usb_event(usb_event_t event, void *event_data, usb_cal
         if (error)
         {
             /* Print the error code to the homescreen */
-            printf("Error %d initting serial\n", error);
+
             return USB_SUCCESS;
         }
 
-        printf("serial initialized\n");
-
-        has_srl_device = true;
+        globalSerialCtx->has_srl_device = true;
     }
 
     if (event == USB_DEVICE_DISCONNECTED_EVENT)
@@ -106,19 +130,22 @@ static usb_error_t handle_usb_event(usb_event_t event, void *event_data, usb_cal
         usb_device_t device = event_data;
         if (device == globalSerialCtx->ctx->srl.dev)
         {
-            printf("device disconnected\n");
+
             srl_Close(&globalSerialCtx->ctx->srl);
-            has_srl_device = false;
+            globalSerialCtx->has_srl_device = false;
         }
     }
 
     return USB_SUCCESS;
 }
 
-void DrawLines(Context *ctx, int horizLength, int vertLength)
+void DrawLines(Context *ctx)
 {
-    int start = 3+BEFORE_DATA_LENGTH;
-    for (int i = start; i < horizLength; i += 3)
+    uint16_t horizLength = ctx->frame->horizLength;
+    uint16_t vertLength = ctx->frame->vertLength;
+
+    uint16_t start = PAYLOAD_INDEX;
+    for (uint16_t i = start; i < start + horizLength; i += 3)
     {
         uint8_t startX = ctx->data[i];
         uint8_t startY = ctx->data[i + 1];
@@ -126,8 +153,8 @@ void DrawLines(Context *ctx, int horizLength, int vertLength)
         gfx_HorizLine_NoClip(startX, startY, dX);
     }
 
-    int vertOffset = start + horizLength;
-    for (int i = vertOffset; i < vertOffset+vertLength; i += 3)
+    uint16_t vertOffset = start + horizLength;
+    for (uint16_t i = vertOffset; i < vertOffset + vertLength; i += 3)
     {
         uint8_t startX = ctx->data[i];
         uint8_t startY = ctx->data[i + 1];
@@ -136,55 +163,49 @@ void DrawLines(Context *ctx, int horizLength, int vertLength)
     }
 }
 
-void Reset(Context *ctx, SerialContext *serialCtx, uint8_t *srlBuffPtr, int *bytesRead)
+void SendACK(SerialContext *serialCtx, Framing *frame)
+{
+    srl_Write(&serialCtx->srl, frame->ackMagicBytes, MAGIC_BYTES_LENGTH);
+}
+void Reset(Context *ctx, int *bytesRead)
 {
     *bytesRead = 0;
     ctx->frame->totalSize = 0;
-    ctx->frame->totalSize = 0;
-    ctx->hasEnded = false;
+    ctx->frame->vertLength = 0;
+    ctx->frame->horizLength = 0;
 }
 
-bool SetupFrame(Context *ctx, SerialContext *serialCtx, int bytesRead)
+void DecodeFraming(Context *ctx)
 {
+    uint16_t horizLength = ctx->data[HORIZ_OFFSET] | ((uint16_t)ctx->data[HORIZ_OFFSET + 1] << 8);
+    uint16_t vertLength = ctx->data[VERT_OFFSET] | ((uint16_t)ctx->data[VERT_OFFSET + 1] << 8);
 
-    if (bytesRead < 3)
+    ctx->frame->horizLength = horizLength;
+    ctx->frame->vertLength = vertLength;
+}
+
+FrameSize ParseHeader(Context *ctx)
+{
+    uint8_t *magicHeader = ctx->frame->startMagicBytes;
+    bool isHeaderCorrect = ctx->data[0] == magicHeader[0] && ctx->data[1] == magicHeader[1] && ctx->data[2] == magicHeader[2];
+    if (isHeaderCorrect)
     {
-        if (bytesRead > 0 && ctx->data[0] != 255)
-        {
-            return false;
-        }
-        return true;
+        uint16_t totalSize = ctx->data[MESSAGE_SIZE_OFFSET] | ((uint16_t)ctx->data[MESSAGE_SIZE_OFFSET + 1] << 8);
+        ctx->frame->totalSize = totalSize;
+        if (totalSize > BUFFER_SIZE)
+            return FRAME_LENGTH_OVERSIZED;
+
+        return FRAME_LENGTH_OKAY;
     }
-    if (ctx->data[0] != 255)
-    {
-        return false;
-    }
-    if (ctx->frame->totalSize == 0 && ctx->data[0] == 255)
-    {
-        ctx->frame->totalSize = ((uint16_t)ctx->data[2] << 8) | ctx->data[1];
-        if (ctx->frame->totalSize > serialCtx->bufferSize)
-        {
-            return false;
-        }
-    }
-    return true;
+    return FRAME_HEADER_INCORRECT;
 }
 
 int ReadSerial(Context *ctx, SerialContext *serialCtx, int bytesRead)
 {
-    int n = srl_Read(&serialCtx->srl, ctx->data + bytesRead, serialCtx->bufferSize - bytesRead);
-
-    if (n < 0)
-        return n;
-    return n;
+    return srl_Read(&serialCtx->srl, ctx->data + bytesRead, serialCtx->bufferSize - bytesRead);
 }
 
-void SendACK(SerialContext *serialCtx)
-{
-    srl_Write(&serialCtx->srl, (uint8_t[]){200, 220, 250}, 3);
-}
-
-int StartConnection()
+bool StartConnection()
 {
     os_ClrHome();
     gfx_Begin();
@@ -197,13 +218,57 @@ int StartConnection()
     if (usb_error)
     {
         usb_Cleanup();
-        printf("usb init error %u\n", usb_error);
+
         do
             kb_Scan();
         while (!kb_IsDown(kb_KeyClear));
-        return 1;
+        return false;
     }
-    return 0;
+    return true;
+}
+
+FrameResults GatherFrame(Context *ctx, SerialContext *serialCtx, int *bytesRead)
+{
+    ctx->frame->totalSize = FRAMING_WIDTH;
+
+    while (*bytesRead < FRAMING_WIDTH)
+    {
+        // kb_Scan();
+        // if (kb_IsDown(kb_KeyClear))
+        //     return FRAME_ERROR;
+        if (!globalSerialCtx->has_srl_device)
+            return FRAME_ERROR;
+
+        usb_HandleEvents();
+
+        int amountRead = ReadSerial(ctx, serialCtx, *bytesRead);
+        if (amountRead < 0)
+            return FRAME_ERROR;
+
+        *bytesRead += amountRead;
+    }
+
+    FrameSize size = ParseHeader(ctx);
+    if (size != FRAME_LENGTH_OKAY)
+        return FRAME_MALFORMED;
+
+    while (*bytesRead < ctx->frame->totalSize)
+    {
+        // kb_Scan();
+        // if (kb_IsDown(kb_KeyClear))
+        //     return FRAME_ERROR;
+        if (!globalSerialCtx->has_srl_device)
+            return FRAME_ERROR;
+
+        usb_HandleEvents();
+
+        int amountRead = ReadSerial(ctx, serialCtx, *bytesRead);
+        if (amountRead < 0)
+            return FRAME_ERROR;
+
+        *bytesRead += amountRead;
+    }
+    return FRAME_OKAY;
 }
 
 int main(void)
@@ -212,13 +277,13 @@ int main(void)
     int bytesRead = 0;
 
     SerialContext serialCtx = {.baud = 115200, .bufferSize = BUFFER_SIZE};
-    Framing frame = {.totalSize = 0};
+    Framing frame = {.totalSize = 0, .ackMagicBytes = {200, 220, 250}, .startMagicBytes = {255, 200, 255}};
     USBCallBackSerial callBackContext = {.ctx = &serialCtx, .srlBuff = srlBuff};
     globalSerialCtx = &callBackContext;
-    Context ctx = {.data = buff, .hasEnded = false, .frame = &frame};
+    Context ctx = {.data = buff, .frame = &frame};
 
-    int code = StartConnection();
-    if (code == 1)
+    bool isReady = StartConnection();
+    if (!isReady)
         return 1;
 
     do
@@ -227,42 +292,26 @@ int main(void)
 
         usb_HandleEvents();
 
-        if (!has_srl_device)
+        if (!globalSerialCtx->has_srl_device)
             continue;
 
-        int amountRead = ReadSerial(&ctx, &serialCtx, bytesRead);
-
-        if (amountRead < 0)
+        FrameResults result = GatherFrame(&ctx, &serialCtx, &bytesRead);
+        if (result == FRAME_MALFORMED)
+        {
+            SendACK(&serialCtx, ctx.frame);
+            Reset(&ctx, &bytesRead);
+            continue;
+        }
+        else if (result == FRAME_ERROR)
             break;
 
-        bytesRead += amountRead;
-        
-        // gfx_SetTextXY(10, 10);
-        // gfx_PrintInt(bytesRead, 1);
-        // gfx_SetTextXY(10, 20);
-        // gfx_PrintInt(ctx.frame->totalSize, 1);
-        // gfx_SetTextXY(10, 30);
-        // gfx_PrintInt(amountRead, 1);
-        // gfx_SwapDraw();
-        // gfx_FillScreen(255);
-
-        if (!SetupFrame(&ctx, &serialCtx, bytesRead))
-            Reset(&ctx, &serialCtx, srlBuff, &bytesRead);
-        else if (bytesRead < ctx.frame->totalSize)
-            continue;
-
-        int horizLength = ((uint16_t)ctx.data[4] << 8) | ctx.data[3];
-        int vertLength = ((uint16_t)ctx.data[6] << 8) | ctx.data[5];
-        int totalLines = (horizLength + vertLength) / 6;
-        if(totalLines > MAX_LINES)
-            continue;
-        DrawLines(&ctx, horizLength, vertLength);
+        DecodeFraming(&ctx);
+        DrawLines(&ctx);
 
         gfx_SwapDraw();
         gfx_FillScreen(0);
-
-        SendACK(&serialCtx);
-        Reset(&ctx, &serialCtx, srlBuff, &bytesRead);
+        SendACK(&serialCtx, ctx.frame);
+        Reset(&ctx, &bytesRead);
 
     } while (!kb_IsDown(kb_KeyClear));
 

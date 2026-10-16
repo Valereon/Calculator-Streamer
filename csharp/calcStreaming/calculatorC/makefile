@@ -3,10 +3,12 @@
 # ----------------------------
 
 NAME = Streamer
-ICON = icon.png
 DESCRIPTION = "Desktop Edge Streamer"
-COMPRESSED = NO
+COMPRESSED = YES
+COMPRESSED_MODE = zx7
+ARCHIVED = NO
 
+HAS_PRINTF = NO
 CFLAGS = -Wall -Wextra -Oz
 CXXFLAGS = -Wall -Wextra -Oz
 

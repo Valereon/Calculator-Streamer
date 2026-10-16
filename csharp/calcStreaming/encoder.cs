@@ -44,7 +44,7 @@ class Encoder
             List<List<List<Vec2i>>> groupedLines = SortHorizVertical(twoPoint);
 
             List<byte> encoded = SerializeImage(groupedLines);
-            encoded.Insert(0, 255);
+
 
             Mat recon = DrawLines(twoPoint, 255, 240);
             watch.Reset();
@@ -116,22 +116,24 @@ class Encoder
                 int deltaY = lines[i][j][1].Item1 - lines[i][j][0].Item1;
                 if (deltaX != 0)
                 {
-                    deltaX = Math.Abs(deltaX);
                     if (deltaX < 0)
                     {
+                        deltaX = Math.Abs(deltaX);
                         startPoint.Item0 -= deltaX / 2;
                     }
+                    deltaX = Math.Abs(deltaX);
                     positionEncoder.Write((byte)startPoint.Item0, 8);
                     positionEncoder.Write((byte)startPoint.Item1, 8);
                     positionEncoder.Write((byte)deltaX, 8);
                 }
                 else if (deltaY != 0)
                 {
-                    deltaY = Math.Abs(deltaY);
                     if (deltaY < 0)
                     {
+                        deltaY = Math.Abs(deltaY);
                         startPoint.Item1 -= deltaY / 2;
                     }
+                    deltaY = Math.Abs(deltaY);
                     positionEncoder.Write((byte)startPoint.Item0, 8);
                     positionEncoder.Write((byte)startPoint.Item1, 8);
                     positionEncoder.Write((byte)deltaY, 8);
@@ -141,8 +143,11 @@ class Encoder
 
         positionEncoder.Flush();
         List<byte> positionEncoded = positionEncoder.GetData();
-        positionEncoded.Insert(0, (byte)(positionEncoded.Count + 3 & 0xFF));
-        positionEncoded.Insert(1, (byte)(positionEncoded.Count + 3 >> 8));
+        List<byte> header = [255,200,255];
+        int totalSize = positionEncoded.Count + 2;
+        header.Add((byte)(totalSize & 0xFF));
+        header.Add((byte)(totalSize >> 8));
+        positionEncoded.InsertRange(0, header);
         return positionEncoded;
     }
 
