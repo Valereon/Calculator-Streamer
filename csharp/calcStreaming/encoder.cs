@@ -7,6 +7,7 @@ using System.Text;
 
 class Encoder
 {
+    readonly List<byte> MAGIC_HEADER = [255, 200, 255];
     public void Encode(Vector2 targetRes)
     {
         Stopwatch watch = Stopwatch.StartNew();
@@ -135,7 +136,6 @@ class Encoder
         return [first, last];
     }
 
-
     private List<byte> EncodeHeader(int horiz, int vert, int size)
     {
 
@@ -148,7 +148,7 @@ class Encoder
         int totalSize = size + 2;
         List<byte> sizeBytes = GetIntAsShortBytes(totalSize);
 
-        List<byte> header = [255, 200, 255];
+        List<byte> header = MAGIC_HEADER.ToList();
         header.AddRange(sizeBytes);
         header.AddRange(horizBytes);
         header.AddRange(vertBytes);
