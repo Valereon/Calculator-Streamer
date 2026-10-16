@@ -31,9 +31,7 @@ typedef struct
 
 typedef struct
 {
-    uint16_t payloadSize; // so there is 3 bytes of overhead this iS NOT INCLUDING THAT
-    int framingOverhead;  // this is the overhead
-    int totalSize;        // THIS is the total byte count including all framing
+    uint16_t totalSize; // so there is 3 bytes of overhead this iS NOT INCLUDING THAT
 } Framing;
 
 typedef struct
@@ -46,8 +44,9 @@ typedef struct
 USBCallBackSerial *globalSerialCtx;
 bool has_srl_device = false;
 
-#define FRAMING_OVERHEAD 3
+#define BEFORE_DATA_LENGTH 4
 #define BUFFER_SIZE 8192
+#define MAX_LINES 1000
 static uint8_t srlBuff[BUFFER_SIZE];
 static uint8_t buff[BUFFER_SIZE];
 
@@ -116,45 +115,31 @@ static usb_error_t handle_usb_event(usb_event_t event, void *event_data, usb_cal
     return USB_SUCCESS;
 }
 
-void DrawLines(Context *ctx, int length)
+void DrawLines(Context *ctx, int horizLength, int vertLength)
 {
-
-    for (int i = ctx->frame->framingOverhead+2; i < length; i += 4)
+    int start = 3+BEFORE_DATA_LENGTH;
+    for (int i = start; i < horizLength; i += 3)
     {
-
         uint8_t startX = ctx->data[i];
         uint8_t startY = ctx->data[i + 1];
-        uint8_t endX = ctx->data[i + 2];
-        uint8_t endY = ctx->data[i + 3];
+        uint8_t dX = ctx->data[i + 2];
+        gfx_HorizLine_NoClip(startX, startY, dX);
+    }
 
-        int dx = endX - startX;
-        int dy = endY - startY;
-
-        if (dx != 0)
-        {
-            if (dx < 0)
-            {
-                dx = -dx;
-                startX -= dx;
-            }
-            gfx_HorizLine_NoClip(startX, startY, dx);
-        }
-        else if (dy != 0)
-        {
-            if (dy < 0)
-            {
-                dy = -dy;
-                startY -= dy;
-            }
-            gfx_VertLine_NoClip(startX, startY, dy);
-        }
+    int vertOffset = start + horizLength;
+    for (int i = vertOffset; i < vertOffset+vertLength; i += 3)
+    {
+        uint8_t startX = ctx->data[i];
+        uint8_t startY = ctx->data[i + 1];
+        uint8_t dY = ctx->data[i + 2];
+        gfx_VertLine_NoClip(startX, startY, dY);
     }
 }
 
 void Reset(Context *ctx, SerialContext *serialCtx, uint8_t *srlBuffPtr, int *bytesRead)
 {
     *bytesRead = 0;
-    ctx->frame->payloadSize = 0;
+    ctx->frame->totalSize = 0;
     ctx->frame->totalSize = 0;
     ctx->hasEnded = false;
 }
@@ -174,10 +159,9 @@ bool SetupFrame(Context *ctx, SerialContext *serialCtx, int bytesRead)
     {
         return false;
     }
-    if (ctx->frame->payloadSize == 0 && ctx->data[0] == 255)
+    if (ctx->frame->totalSize == 0 && ctx->data[0] == 255)
     {
-        ctx->frame->payloadSize = ((uint16_t)ctx->data[2] << 8) | ctx->data[1];
-        ctx->frame->totalSize = ctx->frame->payloadSize + ctx->frame->framingOverhead;
+        ctx->frame->totalSize = ((uint16_t)ctx->data[2] << 8) | ctx->data[1];
         if (ctx->frame->totalSize > serialCtx->bufferSize)
         {
             return false;
@@ -228,7 +212,7 @@ int main(void)
     int bytesRead = 0;
 
     SerialContext serialCtx = {.baud = 115200, .bufferSize = BUFFER_SIZE};
-    Framing frame = {.framingOverhead = FRAMING_OVERHEAD, .payloadSize = 0, .totalSize = 0};
+    Framing frame = {.totalSize = 0};
     USBCallBackSerial callBackContext = {.ctx = &serialCtx, .srlBuff = srlBuff};
     globalSerialCtx = &callBackContext;
     Context ctx = {.data = buff, .hasEnded = false, .frame = &frame};
@@ -252,13 +236,13 @@ int main(void)
             break;
 
         bytesRead += amountRead;
+        
         // gfx_SetTextXY(10, 10);
         // gfx_PrintInt(bytesRead, 1);
         // gfx_SetTextXY(10, 20);
-        // gfx_PrintInt(ctx.frame->payloadSize, 1);
+        // gfx_PrintInt(ctx.frame->totalSize, 1);
         // gfx_SetTextXY(10, 30);
         // gfx_PrintInt(amountRead, 1);
-
         // gfx_SwapDraw();
         // gfx_FillScreen(255);
 
@@ -267,14 +251,13 @@ int main(void)
         else if (bytesRead < ctx.frame->totalSize)
             continue;
 
-        int pointLengths = ((uint16_t)ctx.data[4] << 8) | ctx.data[3];
+        int horizLength = ((uint16_t)ctx.data[4] << 8) | ctx.data[3];
+        int vertLength = ((uint16_t)ctx.data[6] << 8) | ctx.data[5];
+        int totalLines = (horizLength + vertLength) / 6;
+        if(totalLines > MAX_LINES)
+            continue;
+        DrawLines(&ctx, horizLength, vertLength);
 
-        DrawLines(&ctx, pointLengths);
-        // gfx_SetTextXY(10, 10);
-        // gfx_PrintInt(pointLengths, 1);
-
-        // gfx_SwapDraw();
-        // gfx_FillScreen(255);
         gfx_SwapDraw();
         gfx_FillScreen(0);
 

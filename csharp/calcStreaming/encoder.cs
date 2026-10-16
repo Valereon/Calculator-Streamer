@@ -41,16 +41,12 @@ class Encoder
                 continue;
 
             List<List<Vec2i>> twoPoint = MakeTwoPointLines(connected);
-            List<List<Vec2i>> sortedLines = SortLines(twoPoint, 10);
+            List<List<List<Vec2i>>> groupedLines = SortHorizVertical(twoPoint);
 
-
-            List<byte> encoded = SerializeImage(sortedLines);
+            List<byte> encoded = SerializeImage(groupedLines);
             encoded.Insert(0, 255);
 
-
-
-
-            Mat recon = DrawLines(sortedLines, 255, 240);
+            Mat recon = DrawLines(twoPoint, 255, 240);
             watch.Reset();
             watch.Start();
             port.Write(encoded.ToArray(), 0, encoded.Count);
@@ -59,82 +55,95 @@ class Encoder
 
             Cv2.ImShow("wah", recon);
             Cv2.WaitKey(1);
-            Console.WriteLine($"Frame Time : {1000/watch.ElapsedMilliseconds} :: FPS {MathF.Round((float)(11.5 * 1024 / encoded.Count), 2)} :: Bytes {encoded.Count}");
+            if (watch.ElapsedMilliseconds != 0)
+                Console.WriteLine($"Frame Time : {1000 / watch.ElapsedMilliseconds} :: FPS {MathF.Round((float)(11.5 * 1024 / encoded.Count), 2)} :: Bytes {encoded.Count}");
 
 
             byte[] result = new byte[3]; // literally just a magic ACK doenst matter what it is really
             port.Read(result, 0, result.Length);
 
-  
+
             Console.WriteLine(watch.ElapsedMilliseconds);
 
 
         }
     }
 
+    private List<List<List<Vec2i>>> SortHorizVertical(List<List<Vec2i>> lines)
+    {
+        List<List<Vec2i>> vertical = new();
+        List<List<Vec2i>> horizontal = new();
+        foreach (List<Vec2i> points in lines)
+        {
+            int dX = points[1].Item0 - points[0].Item0;
+            int dY = points[1].Item1 - points[0].Item1;
+            if (dX != 0)
+            {
+                horizontal.Add(points);
+            }
+            else if (dY != 0)
+            {
+                vertical.Add(points);
+            }
+        }
+        return [horizontal, vertical];
+    }
 
-    private List<byte> SerializeImage(List<List<Vec2i>> lines)
+    private List<byte> SerializeImage(List<List<List<Vec2i>>> lines)
     {
         BitEncoder positionEncoder = new();
-        int totalLength = lines.Count*4;
-        byte first = (byte)(totalLength & 0xFF);
-        byte last = (byte)(totalLength >> 8);
+
+        int horizLength = lines[0].Count * 3;
+        byte first = (byte)(horizLength & 0xFF);
+        byte last = (byte)(horizLength >> 8);
         positionEncoder.Write(first, 8);
         positionEncoder.Write(last, 8);
 
+        int vertLength = lines[1].Count * 3;
+        first = (byte)(vertLength & 0xFF);
+        last = (byte)(vertLength >> 8);
+        positionEncoder.Write(first, 8);
+        positionEncoder.Write(last, 8);
+
+
         for (int i = 0; i < lines.Count; i++)
         {
-            positionEncoder.Write((byte)lines[i][0].Item0, 8);
-            positionEncoder.Write((byte)lines[i][0].Item1, 8);
-            positionEncoder.Write((byte)lines[i][1].Item0, 8);
-            positionEncoder.Write((byte)lines[i][1].Item1, 8);
+            for (int j = 0; j < lines[i].Count; j++)
+            {
+                Vec2i startPoint = lines[i][j][0];
+
+                int deltaX = lines[i][j][1].Item0 - lines[i][j][0].Item0;
+                int deltaY = lines[i][j][1].Item1 - lines[i][j][0].Item1;
+                if (deltaX != 0)
+                {
+                    deltaX = Math.Abs(deltaX);
+                    if (deltaX < 0)
+                    {
+                        startPoint.Item0 -= deltaX / 2;
+                    }
+                    positionEncoder.Write((byte)startPoint.Item0, 8);
+                    positionEncoder.Write((byte)startPoint.Item1, 8);
+                    positionEncoder.Write((byte)deltaX, 8);
+                }
+                else if (deltaY != 0)
+                {
+                    deltaY = Math.Abs(deltaY);
+                    if (deltaY < 0)
+                    {
+                        startPoint.Item1 -= deltaY / 2;
+                    }
+                    positionEncoder.Write((byte)startPoint.Item0, 8);
+                    positionEncoder.Write((byte)startPoint.Item1, 8);
+                    positionEncoder.Write((byte)deltaY, 8);
+                }
+            }
         }
 
         positionEncoder.Flush();
         List<byte> positionEncoded = positionEncoder.GetData();
-        positionEncoded.Insert(0, (byte)(positionEncoded.Count & 0xFF));
-        positionEncoded.Insert(1, (byte)(positionEncoded.Count >> 8));
+        positionEncoded.Insert(0, (byte)(positionEncoded.Count + 3 & 0xFF));
+        positionEncoded.Insert(1, (byte)(positionEncoded.Count + 3 >> 8));
         return positionEncoded;
-    }
-
-
-    private List<List<Vec2i>> SortLines(List<List<Vec2i>> lines, int startingChecks)
-    {
-        List<List<Vec2i>> order = new();
-
-
-        bool[] visited = new bool[lines.Count];
-
-        List<Vec2i> current = lines[0];
-        visited[0] = true;
-        order.Add(current);
-
-        while (true)
-        {
-            int bestCost = 999999999;
-            bool foundNext = false;
-            List<Vec2i> bestCandidate = new();
-            int index = 0;
-            for (int i = 0; i < lines.Count; i++)
-            {
-                if (visited[i])
-                    continue;
-                int cost = LineDeltaCost(current, lines[i]);
-                if (cost < bestCost)
-                {
-                    index = i;
-                    bestCost = cost;
-                    bestCandidate = lines[i];
-                    foundNext = true;
-                }
-            }
-            if (!foundNext)
-                break;
-            order.Add(bestCandidate);
-            current = bestCandidate;
-            visited[index] = true;
-        }
-        return order;
     }
 
     private List<List<Vec2i>> CustomLineTrace(Mat src)
@@ -310,16 +319,6 @@ class Encoder
         OpenCvSharp.Size size = new(targetRes.X, targetRes.Y);
         Cv2.Resize(image, outMat, size, 0, 0, InterpolationFlags.Area);
         return outMat;
-    }
-    private int LineDeltaCost(List<Vec2i> a, List<Vec2i> b)
-    {
-        Vec2i startA = a[0];
-        Vec2i endA = a.Last();
-
-        Vec2i startB = b[0];
-        Vec2i endB = b.Last();
-        // manhattan distance :) //
-        return Math.Abs(endA.Item0 - startB.Item0) + Math.Abs(endA.Item1 - startB.Item1);
     }
     private bool IsPointValid(int row, int col, int rowCount, int colCount)
     {
