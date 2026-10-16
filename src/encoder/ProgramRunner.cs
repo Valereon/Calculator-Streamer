@@ -2,7 +2,7 @@
 
 namespace SSIF;
 
-class Program
+class ProgramRunner
 {
     static void Main(string[] args)
     {

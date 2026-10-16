@@ -5,7 +5,6 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <PublishAot>true</PublishAot>
-
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="OpenCvSharp5.Windows" Version="5.0.0.20260806" />
