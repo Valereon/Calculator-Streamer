@@ -6,6 +6,8 @@ This project allows you to stream edge detected video over the usb2.0 connection
 ![Demo video](demo.gif)<br>
 [Longer Youtube Video (1:02)](https://www.youtube.com/shorts/b3qhhpAczCk)
 
+This GIF is limited to 10fps but in practice it runs at 30-70 fps depending on content see the youtube video for full quality
+
 ## Requirements
 - Any version of OBS
 - a jailbroken TI84 Plus CE
