@@ -167,6 +167,7 @@ void SendACK(SerialContext *serialCtx, Framing *frame)
 {
     srl_Write(&serialCtx->srl, frame->ackMagicBytes, MAGIC_BYTES_LENGTH);
 }
+
 void Reset(Context *ctx, int *bytesRead)
 {
     *bytesRead = 0;
